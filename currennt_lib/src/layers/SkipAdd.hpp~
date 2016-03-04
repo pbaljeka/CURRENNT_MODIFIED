@@ -1,0 +1,22 @@
+/****
+ *
+ *
+ *
+ ****/
+
+#ifndef LAYERS_SKIPADDLAYER_HPP
+#define LAYERS_SKIPADDLAYER_HPP
+
+#include "TrainableLayer.hpp"
+
+namespace layers {
+    
+    /**********************************************************************
+	    Definition of the Skip Add layer
+     **********************************************************************/
+    
+    
+}
+
+
+

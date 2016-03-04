@@ -64,10 +64,13 @@ namespace layers {
         real_vector& _outputs();
 	
 	/* Add 16-02-22 Wang: for WE updating */
-	bool&        _inputWeUpdate();
-	bool         _setInputWeUpdate();
+	bool         _setInputWeUpdate(const bool& flag);
 	
     public:
+
+	/* Add 16-02-22 Wang: for WE updating */
+	bool&        inputWeUpdate();
+	
         /**
          * Constructs the Layer
          *

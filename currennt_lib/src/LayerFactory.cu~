@@ -100,14 +100,14 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createSkipAddLayer(
 					   const helpers::JsonValue &weightsSection,
 					   int                       parallelSequences, 
 					   int                       maxSeqLength,
-					   std::vector<layers::Layer<TDevice>*> precedingLayers
+					   std::vector<boost::shared_ptr<layers::Layer<TDevice> > > &precedingSkipLayer
 					   )
 {
     using namespace layers;
     if (layerType != "skipadd"){
 	throw std::runtime_error(std::string("The layer is not skipadd"));
     }else{
-	return new SkipAddLayer<TDevice>(layerChild, weightsSection, precedingLayers);
+	return new SkipAddLayer<TDevice>(layerChild, weightsSection, precedingSkipLayer);
     }
 }
 

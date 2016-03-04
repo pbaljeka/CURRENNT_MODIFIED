@@ -30,6 +30,7 @@
 #include "../activation_functions/Tanh.cuh"
 #include "../activation_functions/Logistic.cuh"
 #include "../activation_functions/Identity.cuh"
+#include "../activation_functions/Relu.cuh"
 
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
@@ -134,6 +135,8 @@ namespace layers {
                 s = "feedforward_logistic";
             else if (typeid(TActFn) == typeid(activation_functions::Identity))
                 s = "feedforward_identity";
+	    else if (typeid(TActFn) == typeid(activation_functions::Relu))
+		s = "feedforward_rele";
             else
                 throw std::runtime_error("Unsupported activation function");
         }
@@ -189,16 +192,23 @@ namespace layers {
         // back-propagate the error to the preceding layer
         {{
             TrainableLayer<TDevice> *pl = dynamic_cast<TrainableLayer<TDevice>*>(&this->precedingLayer());
-	    /* Add 16-02-22 Wang: for WE updating */
-	    // If the input layer will udpate the word vectors
-	    // we need to propagate the errors back to the input layer
-	    // if (pl) {
-            if (pl || this->precedingLayer().inputWeUpdate()) {
+	    if (pl) {
                 helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      pl->size(),   this->size());
                 helpers::Matrix<TDevice> plErrorsMatrix(&pl->outputErrors(),   pl->size(),   this->curMaxSeqLength() * this->parallelSequences());
                 helpers::Matrix<TDevice> deltasMatrix  (&this->outputErrors(), this->size(), this->curMaxSeqLength() * this->parallelSequences());
                 plErrorsMatrix.assignProduct(weightsMatrix, false, deltasMatrix, false);
-            }
+            }else{
+		/* Add 16-02-22 Wang: for WE updating */
+		// If the input layer will udpate the word vectors
+		// we need to propagate the errors back to the input layer
+		Layer<TDevice> *pl2 = dynamic_cast<Layer<TDevice>*>(&this->precedingLayer());
+		if (this->precedingLayer().inputWeUpdate()){
+		    helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      pl2->size(),  this->size());
+		    helpers::Matrix<TDevice> plErrorsMatrix(&pl2->outputErrors(),  pl2->size(),  this->curMaxSeqLength() * this->parallelSequences());
+		    helpers::Matrix<TDevice> deltasMatrix  (&this->outputErrors(), this->size(), this->curMaxSeqLength() * this->parallelSequences());
+		    plErrorsMatrix.assignProduct(weightsMatrix, false, deltasMatrix, false);
+		}
+	    }
         }}
 
         // compute the input weight updates
@@ -235,5 +245,7 @@ namespace layers {
     template class FeedForwardLayer<Gpu, activation_functions::Logistic>;
     template class FeedForwardLayer<Cpu, activation_functions::Identity>;
     template class FeedForwardLayer<Gpu, activation_functions::Identity>;
+    template class FeedForwardLayer<Cpu, activation_functions::Relu>;
+    template class FeedForwardLayer<Gpu, activation_functions::Relu>;
 
 } // namespace layers

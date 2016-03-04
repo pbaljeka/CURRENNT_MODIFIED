@@ -74,8 +74,10 @@ private:
     bool        m_weUpdate; // whether update the input we vector?
     unsigned    m_weIDDim;  // we index in which dimension of input vector (base 0)
     unsigned    m_weDim;    // dimension of the input we vector
-    std::string m_weBank;   // path to the we data
-    
+    real_t      m_weLearningRate; // learning rate for we
+    std::string m_weBank;         // path to the we data
+    std::string m_trainedParameter;  // path to the trained model, only model parameter will be read
+        
 
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
@@ -470,11 +472,12 @@ public:
     bool weUpdate() const;
 
     const std::string& weBankPath() const;
-
+    const std::string& trainedParameterPath() const;
     const unsigned& weIDDim() const;
     
     const unsigned& weDim() const;
     
+    real_t weLearningRate() const;
 };
 
 

@@ -40,7 +40,7 @@ namespace layers {
     
     /* Add 16-02-22 Wang: for WE updating */
     template <typename TDevice>
-    bool& Layer<TDevice>::_inputWeUpdate()
+    bool& Layer<TDevice>::inputWeUpdate()
     {
 	return m_InputWeUpdate;
     }
@@ -48,7 +48,7 @@ namespace layers {
     bool Layer<TDevice>::_setInputWeUpdate(const bool& flag)
     {
 	m_InputWeUpdate = flag;
-	return True;
+	return true;
     }
     
 
@@ -151,7 +151,7 @@ namespace layers {
     template <typename TDevice>
     Cpu::real_vector& Layer<TDevice>::outputErrorsCpu()
     {
-	thrust::copy(m_outputErros.begin(), m_outputErros.end(), m_outputErrosCopy);
+	thrust::copy(m_outputErrors.begin(), m_outputErrors.end(), m_outputErrorsCopy.begin());
         return m_outputErrorsCopy;
     }
     

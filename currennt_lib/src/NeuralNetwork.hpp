@@ -48,6 +48,9 @@ class NeuralNetwork
 {
 private:
     std::vector<boost::shared_ptr<layers::Layer<TDevice> > > m_layers;
+    
+    /* Add 02-24 Wang Residual Network*/
+    std::vector<layers::Layer<TDevice>*> m_skipAddLayers;
 
 public:
     /**

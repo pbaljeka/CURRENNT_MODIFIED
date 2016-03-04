@@ -39,6 +39,8 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
                                       int inputSizeOverride = -1, int outputSizeOverride = -1)
 {
     try {
+	
+	
         // check the layers and weight sections
         if (!jsonDoc->HasMember("layers"))
             throw std::runtime_error("Missing section 'layers'");
@@ -57,7 +59,8 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
 
         // extract the layers
         for (rapidjson::Value::ValueIterator layerChild = layersSection.Begin(); layerChild != layersSection.End(); ++layerChild) {
-            // check the layer child type
+            
+	    // check the layer child type
             if (!layerChild->IsObject())
                 throw std::runtime_error("A layer section in the 'layers' array is not an object");
 
@@ -81,13 +84,42 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
 	    */
             try {
             	layers::Layer<TDevice> *layer;
-
+		
+		
+		/* Add 02-24 Wang for Residual Network*/
+		/*
                 if (m_layers.empty())
                 	layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength);
                 else
-                    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength, m_layers.back().get());
+                    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, 
+		    parallelSequences, maxSeqLength, m_layers.back().get()); */
+                if (m_layers.empty()){   
+		    // first layer
+		    if (layerType == "skipadd")
+			throw std::runtime_error("SkipAdd layer can not be the first layer");
+		    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength);
+		}else if(layerType == "skipadd"){
+		    // the following layer is skipadd
+		    
+		    std::vector<layers::Layer<TDevice>*> SkipLayers;
+		    if (m_skipAddLayers.size()>0){
+			SkipLayers.push_back(m_skipAddLayers.back());
+		    }
+		    SkipLayers.push_back(m_layers.back().get());
+		    
+		    layer = LayerFactory<TDevice>::createSkipAddLayer(layerType, &*layerChild, weightsSection, parallelSequences, 
+								      maxSeqLength, SkipLayers);
+		    // add the skipadd layer to buffer
+		    m_skipAddLayers.push_back(layer);
+		
+		}else{
+		    // normal layers
+                    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, 
+							       parallelSequences, maxSeqLength, m_layers.back().get());		
+		}
 
                 m_layers.push_back(boost::shared_ptr<layers::Layer<TDevice> >(layer));
+		
             }
             catch (const std::exception &e) {
                 throw std::runtime_error(std::string("Could not create layer: ") + e.what());

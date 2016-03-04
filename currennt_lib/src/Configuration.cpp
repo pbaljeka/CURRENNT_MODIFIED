@@ -288,6 +288,8 @@ Configuration::Configuration(int argc, const char *argv[])
         m_weightsDistribution = DISTRIBUTION_NORMAL;
     else if (weightsDistString == "uniform")
         m_weightsDistribution = DISTRIBUTION_UNIFORM;
+    else if (weightsDistString == "uninorm")
+	m_weightsDistribution = DISTRIBUTION_UNINORMALIZED;
     else {
         std::cout << "ERROR: Invalid initial weights distribution type. Possible values: normal, uniform." << std::endl;
         exit(1);
@@ -369,7 +371,9 @@ Configuration::Configuration(int argc, const char *argv[])
     if (m_trainingMode) {
         if (m_weightsDistribution == DISTRIBUTION_NORMAL)
             std::cout << "Normal distribution with mean=" << m_weightsNormalMean << " and sigma=" << m_weightsNormalSigma;
-        else
+        else if (m_weightsDistribution == DISTRIBUTION_UNINORMALIZED)
+	    std::cout << "Uniform distribution with layer-wise range" << std::endl;
+	else
             std::cout << "Uniform distribution with range [" << m_weightsUniformMin << ", " << m_weightsUniformMax << "]";
         std::cout << ". Random seed: " << m_randomSeed << std::endl;
     }
@@ -377,6 +381,10 @@ Configuration::Configuration(int argc, const char *argv[])
     /* Add 16-02-22 Wang: for WE updating */
     if (m_weUpdate){
 	// for checking:
+	if (m_inputNoiseSigma > 0.0){
+	    std::cout << "WARNING: the external vectors are utilized, noise on input will be turned off" << std::endl;
+	    m_inputNoiseSigma = 0.0;
+	}
 	if (m_weIDDim < 0 || m_weDim < 1 || m_weBank.size()<1){
 	    std::cout << "ERROR: Invalid configuration for WE updating" << std::endl;
 	    exit(1);

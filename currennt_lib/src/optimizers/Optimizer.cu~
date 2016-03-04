@@ -103,7 +103,11 @@ namespace optimizers {
             _updateWeights();
 
         // normalize the errors
-        error /= ds.totalSequences();
+
+	// strange, why totalSequences? when parallel sequences are calculated, there may be bias
+        //error /= ds.totalSequences();
+	error /= ds.totalTimesteps();
+
         *classError /= (real_t)ds.totalTimesteps();
 
         return error;
@@ -362,7 +366,12 @@ namespace optimizers {
 
         _importWeights(jsonDoc, "optimizer_best_weights", &m_bestWeights);
     }
-
+    
+    template <typename TDevice>
+    void Optimizer<TDevice>::importParameter(const helpers::JsonDocument &jsonDoc)
+    {
+        _importWeights(jsonDoc, "optimizer_best_weights", &m_bestWeights);
+    }
 
     // explicit template instantiations
     template class Optimizer<Cpu>;

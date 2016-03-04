@@ -39,6 +39,8 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
                                       int inputSizeOverride = -1, int outputSizeOverride = -1)
 {
     try {
+	
+	
         // check the layers and weight sections
         if (!jsonDoc->HasMember("layers"))
             throw std::runtime_error("Missing section 'layers'");
@@ -57,7 +59,8 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
 
         // extract the layers
         for (rapidjson::Value::ValueIterator layerChild = layersSection.Begin(); layerChild != layersSection.End(); ++layerChild) {
-            // check the layer child type
+            
+	    // check the layer child type
             if (!layerChild->IsObject())
                 throw std::runtime_error("A layer section in the 'layers' array is not an object");
 
@@ -81,13 +84,42 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
 	    */
             try {
             	layers::Layer<TDevice> *layer;
-
+		
+		
+		/* Add 02-24 Wang for Residual Network*/
+		/*
                 if (m_layers.empty())
                 	layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength);
                 else
-                    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength, m_layers.back().get());
+                    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, 
+		    parallelSequences, maxSeqLength, m_layers.back().get()); */
+                if (m_layers.empty()){   
+		    // first layer
+		    if (layerType == "skipadd")
+			throw std::runtime_error("SkipAdd layer can not be the first layer");
+		    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength);
+		}else if(layerType == "skipadd"){
+		    // the following layer is skipadd
+		    
+		    std::vector<layers::Layer<TDevice>*> SkipLayers;
+		    if (m_skipAddLayers.size()>0){
+			SkipLayers.push_back(m_skipAddLayers.back().get());
+		    }
+		    SkipLayers.push_back(m_layers.back().get());
+		    
+		    layer = LayerFactory<TDevice>::createSkipAddLayer(layerType, &*layerChild, weightsSection, parallelSequences, 
+								      maxSeqLength, m_layers.back().get(), SkipLayers);
+		    // add the skipadd layer to buffer
+		    m_skipAddLayers.push_back(boost::shared_ptr<layers::Layer<TDevice> >(layer));
+		
+		}else{
+		    // normal layers
+                    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, 
+							       parallelSequences, maxSeqLength, m_layers.back().get());		
+		}
 
                 m_layers.push_back(boost::shared_ptr<layers::Layer<TDevice> >(layer));
+		
             }
             catch (const std::exception &e) {
                 throw std::runtime_error(std::string("Could not create layer: ") + e.what());
@@ -263,6 +295,7 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
 
 
 /* Add 16-02-22 Wang: for WE updating */
+// Initialization for using external we bank
 template <typename TDevice>
 bool NeuralNetwork<TDevice>::initWeUpdate(const std::string weBankPath, const unsigned weDim, 
 					  const unsigned weIDDim, const unsigned maxLength)
@@ -275,6 +308,8 @@ bool NeuralNetwork<TDevice>::initWeUpdate(const std::string weBankPath, const un
 	throw std::runtime_error("Fail to initialize for we updating");
     }
 }
+
+// check whether the input layer uses external we bank
 template <typename TDevice>
 bool NeuralNetwork<TDevice>::flagInputWeUpdate() const
 {
@@ -287,6 +322,7 @@ bool NeuralNetwork<TDevice>::flagInputWeUpdate() const
 	return inputLayer->flagInputWeUpdate();
 }
 
+// save the updated we bank in the input layer
 template <typename TDevice>
 bool NeuralNetwork<TDevice>::saveWe(const std::string weFile) const
 {

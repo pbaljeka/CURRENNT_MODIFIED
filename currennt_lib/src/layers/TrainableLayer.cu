@@ -39,6 +39,7 @@
 #include <thrust/functional.h>
 #include <thrust/sequence.h>
 
+#include <cmath>
 
 namespace layers {
 
@@ -117,7 +118,15 @@ namespace layers {
                 boost::random::uniform_real_distribution<real_t> dist(0, range);
                 for (size_t i = 0; i < weights.size(); ++i)
                     weights[i] = dist(*gen) + config.weightsDistributionUniformMin();
-            }
+            }else if (config.weightsDistributionType() == Configuration::DISTRIBUTION_UNINORMALIZED){
+		// Add 02-29 Wang, for uniform distribution with normalzied min-max , Xavier Glorot, Understanding the dif ... 2010
+		// Here, we only make a approximation by assuming n_i+1 = n_i, x~[-sqrt(3)/sqrt(n), sqrt(3)/sqrt(n)]
+		real_t range = 2*std::sqrt(3.0/(real_t)this->size());
+                boost::random::uniform_real_distribution<real_t> dist(0, range);
+                for (size_t i = 0; i < weights.size(); ++i)
+                    weights[i] = dist(*gen) - range/2.0;
+		    
+	    }
             else {
                 boost::random::normal_distribution<real_t> dist(config.weightsDistributionNormalMean(), config.weightsDistributionNormalSigma());
                 for (size_t i = 0; i < weights.size(); ++i)
