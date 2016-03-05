@@ -62,7 +62,7 @@ public:
 	    const helpers::JsonValue &weightsSection,
 	    int                       parallelSequences, 
 	    int                       maxSeqLength,
-	    std::vector<boost::shared_ptr<layers::Layer<TDevice> > > &precedingSkipLayer
+	    std::vector<layers::Layer<TDevice>*> precedingLayers
         );
 };
 

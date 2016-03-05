@@ -30,10 +30,10 @@ namespace layers{
 					std::vector<Layer<TDevice>*> precedingLayers
 					)
 	// use preLayers[0] as fake preceding layers
-	: TrainableLayer<TDevice>(layerChild, weightsSection, 1, 0, *(precedingLayers.back()))
+	: SkipLayer<TDevice>(layerChild, weightsSection, precedingLayers)
     {
 	m_preLayers.assign(precedingLayers.begin(), precedingLayers.end());
-	m_outputErrorsFromSkipLayer = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
+	// m_outputErrorsFromSkipLayer = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
     }	
 
     // Destructor
@@ -91,13 +91,13 @@ namespace layers{
 
 	// send erros to the all the previous layers
 	BOOST_REVERSE_FOREACH (Layer<TDevice> *layer, m_preLayers) {
-	    SkipAddLayer<TDevice>* tempLayer = dynamic_cast<SkipAddLayer<TDevice>*>(layer);
+	    SkipLayer<TDevice>* tempLayer = dynamic_cast<SkipLayer<TDevice>*>(layer);
 	    if(tempLayer){
 		// this is an SkipAdd Layer, erros should be accumulated to m_outputErrorsFromSkipLayer
 		thrust::transform(this->outputErrors().begin(),
 				  this->outputErrors().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
-				  tempLayer->m_outputErrorsFromSkipLayer.begin(),
-				  tempLayer->m_outputErrorsFromSkipLayer.begin(),
+				  tempLayer->outputErrorsFromSkipLayer().begin(),
+				  tempLayer->outputErrorsFromSkipLayer().begin(),
 				  thrust::plus<real_t>()
 				  );
 	    }else{
@@ -123,9 +123,17 @@ namespace layers{
     const std::string& SkipAddLayer<TDevice>::type() const
     {
 	static std::string s;
-	s = "SkipAdd";
+	s = "skipadd";
         return s;
     }
+   
+    /*
+    template <typename TDevice>
+    typename SkipAddLayer<TDevice>::real_vector& SkipAddLayer<TDevice>::outputErrorsFromSkipLayer()
+    {
+        return m_outputErrorsFromSkipLayer;
+    }
+    */
 
     template class SkipAddLayer<Cpu>;
     template class SkipAddLayer<Gpu>;

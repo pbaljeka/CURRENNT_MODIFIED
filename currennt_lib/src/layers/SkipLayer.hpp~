@@ -7,7 +7,7 @@
 #ifndef LAYERS_SKIPLAYER_HPP
 #define LAYERS_SKIPLAYER_HPP
 
-#include "SkipLayer.hpp"
+#include "TrainableLayer.hpp"
 #include <boost/foreach.hpp>
 #include <boost/shared_ptr.hpp>
 #include <vector>
@@ -22,43 +22,43 @@ namespace layers {
     
     // class definition
     template <typename TDevice>
-    class SkipLayer : public SkipLayer<TDevice>
+    class SkipLayer : public TrainableLayer<TDevice>
     {
 	typedef typename TDevice::real_vector    real_vector;
         
     private:
 	// all the preceding skipping layers
-	std::vector<Layer<TDevice>*> m_preLayers;
+	// std::vector<Layer<TDevice>*> m_preLayers;
 	// to receive the errors directly from next skip add layer
-	// real_vector       m_outputErrorsFromSkipLayer;
+	real_vector       m_outputErrorsFromSkipLayer;
         
     public:
 	
 	
 	// Construct the layer
-	SkipAddLayer(
+	SkipLayer(
 		     const helpers::JsonValue &layerChild,
 		     const helpers::JsonValue &weightsSection,
 		     std::vector<Layer<TDevice>*> precedingLayers
 		     );
 
 	// Destructor
-	virtual ~SkipAddLayer();
+	virtual ~SkipLayer();
 	
 	// void 
-	virtual const std::string& type() const;
+	//virtual const std::string& type() const;
 
 	// NN forward
-	virtual void computeForwardPass();
+	//virtual void computeForwardPass();
 	
 	// NN backward
-	virtual void computeBackwardPass();
+	//virtual void computeBackwardPass();
 	
 	// return all the preceding layers
-	std::vector<Layer<TDevice>*> PreLayers();
+	//std::vector<Layer<TDevice>*> PreLayers();
 	
 	// return reference to the m_outputErrorsFromSkipLayer
-	// real_vector& outputErrorsFromSkipLayer();
+	real_vector& outputErrorsFromSkipLayer();
     };
 
 }

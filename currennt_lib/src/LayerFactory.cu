@@ -40,6 +40,8 @@
 
 /* Add 02-24 Wang for Residual Network*/
 #include "layers/SkipAddLayer.hpp"
+#include "layers/SkipParaLayer.hpp"
+
 
 #include <stdexcept>
 
@@ -108,6 +110,36 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createSkipAddLayer(
 	throw std::runtime_error(std::string("The layer is not skipadd"));
     }else{
 	return new SkipAddLayer<TDevice>(layerChild, weightsSection, precedingLayers);
+    }
+}
+
+template <typename TDevice>
+layers::Layer<TDevice>* LayerFactory<TDevice>::createSkipParaLayer(
+					   const std::string        &layerType,
+					   const helpers::JsonValue &layerChild,
+					   const helpers::JsonValue &weightsSection,
+					   int                       parallelSequences, 
+					   int                       maxSeqLength,
+					   std::vector<layers::Layer<TDevice>*> precedingLayers
+					   )
+{
+    using namespace layers;
+    using namespace activation_functions;
+
+    if (precedingLayers.size()!=2){
+	throw std::runtime_error(std::string("SkipParaLayer only allows two input paths"));
+    }else{
+	if (layerType == "skippara_tanh"){
+	    return new SkipParaLayer<TDevice, Tanh>(layerChild, weightsSection, precedingLayers);
+	}else if(layerType == "skippara_logistic"){
+	    return new SkipParaLayer<TDevice, Logistic>(layerChild, weightsSection, precedingLayers);
+	}else if(layerType == "skippara_identity"){
+	    return new SkipParaLayer<TDevice, Identity>(layerChild, weightsSection, precedingLayers);	    
+	}else if(layerType == "skippara_relu"){
+	    return new SkipParaLayer<TDevice, Relu>(layerChild, weightsSection, precedingLayers);
+	}else{
+	    throw std::runtime_error(std::string("Unknown SkipPara type:")+layerType);
+	}
     }
 }
 

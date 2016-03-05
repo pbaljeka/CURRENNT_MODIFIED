@@ -95,21 +95,33 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
 		    parallelSequences, maxSeqLength, m_layers.back().get()); */
                 if (m_layers.empty()){   
 		    // first layer
-		    if (layerType == "skipadd")
-			throw std::runtime_error("SkipAdd layer can not be the first layer");
+		    if (layerType == "skipadd" || layerType == "skippara_logistic" || layerType == "skippara_relu" || layerType == "skippara_tanh" || layerType == "skippara_identity")
+			throw std::runtime_error("SkipAdd and SkipPara layer can not be the first layer");
 		    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength);
-		}else if(layerType == "skipadd"){
-		    // the following layer is skipadd
-		    
+
+		}else if(layerType == "skipadd" || layerType == "skippara_logistic" || layerType == "skippara_relu" || layerType == "skippara_tanh" || layerType == "skippara_identity"){
+
+		    // SkipLayers: all the layers that link to the current skip layer
+		    //  here, it includes the last skip layer and the previous normal layer connected to this skip layer
 		    std::vector<layers::Layer<TDevice>*> SkipLayers;
-		    if (m_skipAddLayers.size()>0){
-			SkipLayers.push_back(m_skipAddLayers.back());
-		    }
+		    // for skipadd layer:
+		    //   no need to check whether the last skiplayer is directly connected to current skiplayer
+		    //   in that case, F(x) + x = 2*x, the gradients will be multiplied by 2
+		    // for skippara layer:
+		    //   need to check, because H(x)*T(x)+x(1-T(x)) = x if H(x)=x
+		    //   check it in SkipParaLayer.cu
+		    if (m_skipAddLayers.size()>0) {SkipLayers.push_back(m_skipAddLayers.back());}
 		    SkipLayers.push_back(m_layers.back().get());
 		    
-		    layer = LayerFactory<TDevice>::createSkipAddLayer(layerType, &*layerChild, weightsSection, parallelSequences, 
-								      maxSeqLength, SkipLayers);
-		    // add the skipadd layer to buffer
+		    if (layerType == "skipadd")
+			layer = LayerFactory<TDevice>::createSkipAddLayer(layerType, &*layerChild, weightsSection, parallelSequences, 
+									  maxSeqLength, SkipLayers);
+		    else
+			layer = LayerFactory<TDevice>::createSkipParaLayer(layerType, &*layerChild, weightsSection, parallelSequences, 
+									   maxSeqLength, SkipLayers);
+		    
+		    
+		    // add the skipadd layer to Network buffer
 		    m_skipAddLayers.push_back(layer);
 		
 		}else{

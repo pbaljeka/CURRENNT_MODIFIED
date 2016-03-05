@@ -64,6 +64,16 @@ public:
 	    int                       maxSeqLength,
 	    std::vector<layers::Layer<TDevice>*> precedingLayers
         );
+
+    static layers::Layer<TDevice>* createSkipParaLayer(
+            const std::string        &layerType,
+	    const helpers::JsonValue &layerChild,
+	    const helpers::JsonValue &weightsSection,
+	    int                       parallelSequences, 
+	    int                       maxSeqLength,
+	    std::vector<layers::Layer<TDevice>*> precedingLayers
+        );
+
 };
 
 

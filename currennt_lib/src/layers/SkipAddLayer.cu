@@ -30,10 +30,10 @@ namespace layers{
 					std::vector<Layer<TDevice>*> precedingLayers
 					)
 	// use preLayers[0] as fake preceding layers
-	: TrainableLayer<TDevice>(layerChild, weightsSection, 1, 0, *(precedingLayers.back()))
+	: SkipLayer<TDevice>(layerChild, weightsSection, precedingLayers)
     {
 	m_preLayers.assign(precedingLayers.begin(), precedingLayers.end());
-	m_outputErrorsFromSkipLayer = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
+	// m_outputErrorsFromSkipLayer = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
     }	
 
     // Destructor
@@ -58,8 +58,8 @@ namespace layers{
 		     0.0
 		     );
 
-	thrust::fill(m_outputErrorsFromSkipLayer.begin(),
-		     m_outputErrorsFromSkipLayer.begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+	thrust::fill(this->outputErrorsFromSkipLayer().begin(),
+		     this->outputErrorsFromSkipLayer().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
 		     0.0);
 
 	// accumulating the outputs of previous layers
@@ -81,9 +81,9 @@ namespace layers{
     void SkipAddLayer<TDevice>::computeBackwardPass()
     {
 	// 
-	// at first, add the errors in both m_outputErrorsFromSkipLayer and m_outputErrors
-	thrust::transform(m_outputErrorsFromSkipLayer.begin(),
-			  m_outputErrorsFromSkipLayer.begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+	// at first, add the errors in both this->outputErrorsFromSkipLayer() and m_outputErrors
+	thrust::transform(this->outputErrorsFromSkipLayer().begin(),
+			  this->outputErrorsFromSkipLayer().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
 			  this->outputErrors().begin(),
 			  this->outputErrors().begin(),
 			  thrust::plus<real_t>()
@@ -91,13 +91,13 @@ namespace layers{
 
 	// send erros to the all the previous layers
 	BOOST_REVERSE_FOREACH (Layer<TDevice> *layer, m_preLayers) {
-	    SkipAddLayer<TDevice>* tempLayer = dynamic_cast<SkipAddLayer<TDevice>*>(layer);
+	    SkipLayer<TDevice>* tempLayer = dynamic_cast<SkipLayer<TDevice>*>(layer);
 	    if(tempLayer){
-		// this is an SkipAdd Layer, erros should be accumulated to m_outputErrorsFromSkipLayer
+		// this is an SkipAdd Layer, erros should be accumulated to this->outputErrorsFromSkipLayer()
 		thrust::transform(this->outputErrors().begin(),
 				  this->outputErrors().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
-				  tempLayer->m_outputErrorsFromSkipLayer.begin(),
-				  tempLayer->m_outputErrorsFromSkipLayer.begin(),
+				  tempLayer->outputErrorsFromSkipLayer().begin(),
+				  tempLayer->outputErrorsFromSkipLayer().begin(),
 				  thrust::plus<real_t>()
 				  );
 	    }else{
@@ -126,6 +126,14 @@ namespace layers{
 	s = "skipadd";
         return s;
     }
+   
+    /*
+    template <typename TDevice>
+    typename SkipAddLayer<TDevice>::real_vector& SkipAddLayer<TDevice>::outputErrorsFromSkipLayer()
+    {
+        return this->outputErrorsFromSkipLayer();
+    }
+    */
 
     template class SkipAddLayer<Cpu>;
     template class SkipAddLayer<Gpu>;

@@ -4,10 +4,10 @@
  *
  ****/
 
-#ifndef LAYERS_SKIPLAYER_HPP
-#define LAYERS_SKIPLAYER_HPP
+#ifndef LAYERS_SKIPPARALAYER_HPP
+#define LAYERS_SKIPPARALAYER_HPP
 
-#include "SkipLayer.hpp"
+#include "TrainableLayer.hpp"
 #include <boost/foreach.hpp>
 #include <boost/shared_ptr.hpp>
 #include <vector>
@@ -15,35 +15,42 @@
 namespace layers {
     
     /**********************************************************************
-	    Definition of the Skip layer
-     A base class for SkipAdd and SkipPara layers
+	    Definition of the Skip Add layer
+     
 
      **********************************************************************/
     
     // class definition
-    template <typename TDevice>
-    class SkipLayer : public SkipLayer<TDevice>
+    template <typename TDevice, typename TActFn>
+    class SkipParaLayer : public TrainableLayer<TDevice>
     {
 	typedef typename TDevice::real_vector    real_vector;
         
     private:
-	// all the preceding skipping layers
-	std::vector<Layer<TDevice>*> m_preLayers;
+	// the preceding skipping layer
+	//  currently, only one previous skip layer is allowed 
+	//  this is different from skipaddlayer, because I don't want to assign another
+	//  vector to accumulate the input from multiple previous skip layers
+	Layer<TDevice>    *m_preSkipLayer;
+
 	// to receive the errors directly from next skip add layer
-	// real_vector       m_outputErrorsFromSkipLayer;
+	real_vector       m_outputErrorsFromSkipLayer;
+
+	// the gate 
+	real_vector       m_gateOutput;
         
     public:
 	
 	
 	// Construct the layer
-	SkipAddLayer(
+	SkipParaLayer(
 		     const helpers::JsonValue &layerChild,
 		     const helpers::JsonValue &weightsSection,
 		     std::vector<Layer<TDevice>*> precedingLayers
 		     );
 
 	// Destructor
-	virtual ~SkipAddLayer();
+	virtual ~SkipParaLayer();
 	
 	// void 
 	virtual const std::string& type() const;
@@ -55,10 +62,11 @@ namespace layers {
 	virtual void computeBackwardPass();
 	
 	// return all the preceding layers
-	std::vector<Layer<TDevice>*> PreLayers();
+	Layer<TDevice>* preSkipLayer();
+
+	// output of the gate unit
+	real_vector& gateOutput();
 	
-	// return reference to the m_outputErrorsFromSkipLayer
-	// real_vector& outputErrorsFromSkipLayer();
     };
 
 }
