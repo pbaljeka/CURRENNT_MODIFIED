@@ -69,6 +69,7 @@ namespace layers {
 	/* Add 16-02-22 Wang: for WE updating */
 	// thrust::copy(fraction.inputs().begin(), fraction.inputs().end(), this->_outputs().begin());
 	if (m_flagWeUpdate){
+	    
 	    // load in the embedded vectors from weBank
 	    int weidx=0;
 	    long unsigned int bias=0;
@@ -83,11 +84,12 @@ namespace layers {
 		thrust::copy(fraction.inputs().begin()+bias, 
 			     fraction.inputs().begin()+bias+fraction.inputPatternSize(), 
 			     this->_outputs().begin()+i*this->size());
-		// retrieve the embedded vector idx
+		// retrieve the embedded vector idx and save m_weIdx
 		weidx = (long unsigned int)(fraction.inputs()[i*fraction.inputPatternSize()+m_weIDDim]);
 		if (weidx*m_weDim>m_weBank.size()){
 		    throw std::runtime_error("vector idx larger than weBank size");
 		}
+		// the number of valid m_weIdx is always equal to fracTime
 		m_weIdx[i]=weidx;
 		
 		// copy the we data into the input data (output of the InputLayer)

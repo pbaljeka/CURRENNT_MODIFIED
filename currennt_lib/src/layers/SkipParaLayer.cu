@@ -94,10 +94,28 @@ namespace {
     // the errors back propagated to the previous skip layer
     // let d_e/d_y = e, 
     // the error back-propagated should be:
-    //    e * [ (H(x)-x) * T'(x) +1 - T(x)]
+    //    W*ge + e * [1 - T(x)]
+    // W*ge will be assinged to t.get<4>() before this operator
+    // then, e*[1-T(x)] will be accumulated
     // this error will be accumulated into the previous skip layer
     template <typename TActFn>
     struct ComputeAccumulateSkipBackError
+    {
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, const real_t&, real_t&> &t) const
+	{
+	    // t.get<0>() T(x) (delta)
+	    // t.get<1>() e
+	    // t.get<2>() error back propagated
+	    real_t delta = TActFn::deriv(t.get<1>());
+	    t.get<2>() = t.get<2>() + t.get<1>() - t.get<1>() * t.get<0>();
+	}
+    };
+
+    // the erros back propagated to the input to the ActFn of the gate unit
+    //    ge <- [H(x)-x] * T'(x) * e
+    // change the value of e, e will not be used after this step
+    template <typename TActFn>
+    struct ComputeErrorToGateActFn
     {
 	__host__ __device__ void operator() (const thrust::tuple<const real_t&, const real_t&, const real_t&, const real_t&, real_t&> &t) const
 	{
@@ -105,26 +123,9 @@ namespace {
 	    // t.get<1>() T(x) (delta)
 	    // t.get<2>() x
 	    // t.get<3>() e
-	    // t.get<4>() error back propagated
+	    // t.get<4>() ge 
 	    real_t delta = TActFn::deriv(t.get<1>());
-	    t.get<4>() = t.get<4>() + t.get<3>() * ((t.get<0>() - t.get<2>()) * delta - t.get<1>()) + t.get<3>();
-	}
-    };
-
-    // the erros back propagated to the input to the ActFn of the gate unit
-    // e <- [H(x)-x]*T'(x)*e
-    // change the value of e, e will not be used after this step
-    template <typename TActFn>
-    struct ComputeErrorToGateActFn
-    {
-	__host__ __device__ void operator() (const thrust::tuple<const real_t&, const real_t&, const real_t&, real_t&> &t) const
-	{
-	    // t.get<0>() H(x)
-	    // t.get<1>() T(x) (delta)
-	    // t.get<2>() x
-	    // t.get<3>() e
-	    real_t delta = TActFn::deriv(t.get<1>());
-	    t.get<3>() = t.get<3>() * (t.get<0>() - t.get<2>()) * delta;
+	    t.get<4>() = t.get<3>() * (t.get<0>() - t.get<2>()) * delta;
 	}
     };
 	
@@ -187,10 +188,11 @@ namespace layers{
 	// initialize the vector
 	// m_outputErrorsFromSkipLayer = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
 	m_gateOutput                = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
+	m_gateErrors                = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
 
 	// initializing the bias vector to a large negative value, let T(x) approach zero
 	thrust::fill(this->weights().begin() + this->size()*this->preSkipLayer()->size(),
-		     this->weights().end(), -10.0);
+		     this->weights().end(), -1.50);
     }	
 
     // Destructor
@@ -276,6 +278,24 @@ namespace layers{
 			  thrust::plus<real_t>()
 			  );
 
+	
+	// get the errors back before the actFn of gate unit
+	// ge <- e * [H(x)-x]*f'(x), where f(x) is the actFn of gate unit
+	{{
+		internal::ComputeErrorToGateActFn<TActFn> fn;
+		int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
+
+		thrust::for_each(
+		         thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin(), this->gateOutput().begin(),
+								      this->preSkipLayer()->outputs().begin(), this->outputErrors().begin(),
+								      this->gateErrors().begin())),
+			 thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin()+n, this->gateOutput().begin()+n,
+								      this->preSkipLayer()->outputs().begin()+n, this->outputErrors().begin()+n,
+								      this->gateErrors().begin()+n)),
+			 fn
+			 );
+	}}
+
 	std::vector<Layer<TDevice> *> prelayers;
 	prelayers.push_back(this->preSkipLayer());
 	prelayers.push_back(&this->precedingLayer());
@@ -288,20 +308,21 @@ namespace layers{
 		// update the parameter of the gate
 		// this is an SkipPara or SkipAdd Layer, erros should be accumulated to m_outputErrorsFromSkipLayer
 		{{
-			// t.get<0>() H(x)
-			// t.get<1>() T(x) (delta)
-			// t.get<2>() x
-			// t.get<3>() e
-			// t.get<4>() error back propagated
+		    // W * ge + (1-T)*e
+		    // step1. accumulate W * ge to the tempLayer
+		    helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      tempLayer->size(),   this->size());
+		    helpers::Matrix<TDevice> plErrorsMatrix(&tempLayer->outputErrorsFromSkipLayer(),  tempLayer->size(),   
+							    this->curMaxSeqLength() * this->parallelSequences());
+		    helpers::Matrix<TDevice> deltasMatrix  (&this->gateErrors(), this->size(), this->curMaxSeqLength() * this->parallelSequences());
+		    plErrorsMatrix.assignProduct(weightsMatrix, false, deltasMatrix, false);
 
-			internal::ComputeAccumulateSkipBackError<TActFn> fn;
+		    // step2. accumulate the (1 - T) * e 
+		    internal::ComputeAccumulateSkipBackError<TActFn> fn;
 		    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 		    thrust::for_each(
-		         thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin(), this->gateOutput().begin(),
-								      this->preSkipLayer()->outputs().begin(), this->outputErrors().begin(),
+		         thrust::make_zip_iterator(thrust::make_tuple(this->gateOutput().begin(),   this->outputErrors().begin(),
 								      tempLayer->outputErrorsFromSkipLayer().begin())),
-			 thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin()+n, this->gateOutput().begin()+n,
-								      this->preSkipLayer()->outputs().begin()+n, this->outputErrors().begin()+n,
+			 thrust::make_zip_iterator(thrust::make_tuple(this->gateOutput().begin()+n, this->outputErrors().begin()+n,
 								      tempLayer->outputErrorsFromSkipLayer().begin()+n)),
 			 fn
 			 );
@@ -318,28 +339,13 @@ namespace layers{
 	    }
 	}
 	
-	// update the parameter in gate unit
-	// after e has been propagated back, we can now use this->outputErrors even with side effect
-	// so, first, we back propagate the error to the gate unit 
-	// e <- e * [H(x)-x]*T'(x)
-	{{
-		internal::ComputeErrorToGateActFn<TActFn> fn;
-		int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 
-		thrust::for_each(
-		         thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin(), this->gateOutput().begin(),
-								      this->preSkipLayer()->outputs().begin(), this->outputErrors().begin())),
-			 thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin()+n, this->gateOutput().begin()+n,
-								      this->preSkipLayer()->outputs().begin()+n, this->outputErrors().begin()+n)),
-			 fn
-			 );
-	}}
-
+	// Now, this->outputErrors has become the errors before the activation funciton of gate unit
         // compute the input weight updates
         {{
             helpers::Matrix<TDevice> weightUpdatesMatrix(&this->_weightUpdates(),this->size(), this->size());
-            helpers::Matrix<TDevice> plOutputsMatrix    (&this->gateOutput(),   this->size(), this->curMaxSeqLength() * this->parallelSequences());
-            helpers::Matrix<TDevice> deltasMatrix       (&this->outputErrors(),  this->size(), this->curMaxSeqLength() * this->parallelSequences());
+            helpers::Matrix<TDevice> plOutputsMatrix    (&this->preSkipLayer()->outputs(), this->preSkipLayer()->size(), this->curMaxSeqLength() * this->parallelSequences());
+            helpers::Matrix<TDevice> deltasMatrix       (&this->gateErrors(),  this->size(), this->curMaxSeqLength() * this->parallelSequences());
 
             weightUpdatesMatrix.assignProduct(plOutputsMatrix, false, deltasMatrix, true);
         }}
@@ -350,12 +356,12 @@ namespace layers{
             fn.layerSize     = this->size();
             fn.patternsCount = this->curMaxSeqLength() * this->parallelSequences();
             fn.bias          = this->bias();
-            fn.deltas        = helpers::getRawPointer(this->outputErrors());
+            fn.deltas        = helpers::getRawPointer(this->gateErrors());
 
             thrust::transform(
                 thrust::counting_iterator<int>(0),
                 thrust::counting_iterator<int>(0) + this->size(),
-                this->_weightUpdates().begin() + this->precedingLayer().size() * this->size(),
+                this->_weightUpdates().begin() + this->preSkipLayer()->size() * this->size(),
                 fn
                 );
         }}
@@ -372,6 +378,11 @@ namespace layers{
     template <typename TDevice, typename TActFn>
     typename SkipParaLayer<TDevice,TActFn>::real_vector& SkipParaLayer<TDevice,TActFn>::gateOutput(){
 	return m_gateOutput;
+    }
+
+    template <typename TDevice, typename TActFn>
+    typename SkipParaLayer<TDevice,TActFn>::real_vector& SkipParaLayer<TDevice,TActFn>::gateErrors(){
+	return m_gateErrors;
     }
 
     template <typename TDevice, typename TActFn>

@@ -38,6 +38,8 @@ namespace layers {
 
 	// the gate 
 	real_vector       m_gateOutput;
+        // the gate error
+	real_vector       m_gateErrors; // error before the actFn of gate unit
         
     public:
 	
@@ -66,6 +68,9 @@ namespace layers {
 
 	// output of the gate unit
 	real_vector& gateOutput();
+	
+	// 
+	real_vector& gateErrors();
 	
     };
 

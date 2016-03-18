@@ -87,6 +87,7 @@ namespace layers {
 		// retrieve the embedded vector idx and save m_weIdx
 		weidx = (long unsigned int)(fraction.inputs()[i*fraction.inputPatternSize()+m_weIDDim]);
 		if (weidx*m_weDim>m_weBank.size()){
+		    printf("Vector idx: %d\t", weidx);
 		    throw std::runtime_error("vector idx larger than weBank size");
 		}
 		// the number of valid m_weIdx is always equal to fracTime

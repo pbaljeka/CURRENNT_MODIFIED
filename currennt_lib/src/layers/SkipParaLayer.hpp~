@@ -7,7 +7,7 @@
 #ifndef LAYERS_SKIPPARALAYER_HPP
 #define LAYERS_SKIPPARALAYER_HPP
 
-#include "TrainableLayer.hpp"
+#include "SkipLayer.hpp"
 #include <boost/foreach.hpp>
 #include <boost/shared_ptr.hpp>
 #include <vector>
@@ -22,7 +22,7 @@ namespace layers {
     
     // class definition
     template <typename TDevice, typename TActFn>
-    class SkipParaLayer : public TrainableLayer<TDevice>
+    class SkipParaLayer : public SkipLayer<TDevice>
     {
 	typedef typename TDevice::real_vector    real_vector;
         
@@ -34,7 +34,7 @@ namespace layers {
 	Layer<TDevice>    *m_preSkipLayer;
 
 	// to receive the errors directly from next skip add layer
-	real_vector       m_outputErrorsFromSkipLayer;
+	// real_vector       m_outputErrorsFromSkipLayer;
 
 	// the gate 
 	real_vector       m_gateOutput;
