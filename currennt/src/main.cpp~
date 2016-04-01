@@ -159,7 +159,7 @@ int trainerMain(const Configuration &config)
 
 	/* Add 16-02-22 Wang: for WE updating */
 	// NeuralNetwork<TDevice> neuralNetwork(netDoc, parallelSequences, maxSeqLength, inputSize, outputSize);	
-	if (config.weUpdate()){
+	if (config.weUpdate() && config.trainingMode()){
 	    // change input size when external WE is used
 	    // this inputSize will be checked against parameter set in neuralNetwork()
 	    inputSize = inputSize-1+config.weDim();

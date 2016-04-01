@@ -70,7 +70,7 @@ namespace layers {
             );
 	
 	/* Add 0401 for weighted MSE */
-	bool readMseWeight(const std::string mseWeightPath);
+	bool readMseWeight(const std::string mseWeightPath, const unsigned dim);
 	bool flagMseWeight();
 	
         /**

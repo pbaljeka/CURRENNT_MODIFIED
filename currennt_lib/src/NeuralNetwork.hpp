@@ -155,6 +155,9 @@ public:
     
     bool flagInputWeUpdate() const;
     bool saveWe(const std::string weFile) const;
+    
+    /* Add 04-01 Wang: for RMSE output mask */
+    bool initMseWeight(const std::string mseWeightPath);
 };
 
 

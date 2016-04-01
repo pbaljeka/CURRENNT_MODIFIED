@@ -37,6 +37,60 @@
 namespace internal {
 namespace {
 
+	/* Add 16-04-01 Add mse weighted RMSE */
+    struct ComputeSseFnWeighted
+    {
+        int layerSize;
+	const real_t *weights;
+        const char *patTypes;
+
+        __host__ __device__ real_t operator() (const thrust::tuple<real_t, real_t, int> &values) const
+        {
+            // unpack the tuple
+            real_t target = values.get<0>();
+            real_t output = values.get<1>();
+            int outputIdx = values.get<2>();
+
+            // check if we have to skip this value
+            int patIdx = outputIdx / layerSize;
+            if (patTypes[patIdx] == PATTYPE_NONE)
+                return 0;
+
+	    int blockIdx = outputIdx % layerSize; 
+            // calculate the error
+            real_t diff = (target - output)*weights[blockIdx];
+            return (diff * diff);
+        }
+    };
+
+    struct ComputeOutputErrorFnWeighted
+    {
+        int layerSize;
+	const real_t *weights; 
+        const char *patTypes;
+
+        __host__ __device__ real_t operator() (const thrust::tuple<const real_t&, const real_t&, int> &t) const
+        {
+            // unpack the tuple
+            real_t actualOutput = t.get<0>();
+            real_t targetOutput = t.get<1>();
+            int    outputIdx    = t.get<2>();
+
+            // calculate the pattern index
+            int patIdx = outputIdx / layerSize;
+
+            // check if the pattern is a dummy
+            if (patTypes[patIdx] == PATTYPE_NONE)
+                return 0;
+	    
+            int blockIdx = outputIdx % layerSize; 
+            // calculate the error
+            real_t error = (actualOutput - targetOutput)*weights[blockIdx];
+
+            return error;
+        }
+    };
+    
     struct ComputeSseFn
     {
         int layerSize;
@@ -62,31 +116,24 @@ namespace {
     };
 
     struct ComputeOutputErrorFn
-    {
-        int layerSize;
-
-        const char *patTypes;
-
-        __host__ __device__ real_t operator() (const thrust::tuple<const real_t&, const real_t&, int> &t) const
-        {
-            // unpack the tuple
-            real_t actualOutput = t.get<0>();
-            real_t targetOutput = t.get<1>();
-            int    outputIdx    = t.get<2>();
-
-            // calculate the pattern index
-            int patIdx = outputIdx / layerSize;
-
-            // check if the pattern is a dummy
-            if (patTypes[patIdx] == PATTYPE_NONE)
-                return 0;
-
-            // calculate the error
-            real_t error = actualOutput - targetOutput;
-
-            return error;
-        }
-    };
+    {        
+    	int layerSize;
+    	const char *patTypes;
+    	__host__ __device__ real_t operator() (const thrust::tuple<const real_t&, const real_t&, int> &t) const        
+    	{            // unpack the tuple
+    	            real_t actualOutput = t.get<0>();
+    	            real_t targetOutput = t.get<1>();
+    	            int    outputIdx    = t.get<2>();
+    	            // calculate the pattern index
+    	            int patIdx = outputIdx / layerSize;
+    	            // check if the pattern is a dummy
+    	            if (patTypes[patIdx] == PATTYPE_NONE)
+    	            	return 0;
+    	            // calculate the error
+    	            real_t error = actualOutput - targetOutput;
+    	            return error;
+    	            }
+    	};
     
 } // anonymous namespace
 } // namespace anonymous
@@ -115,21 +162,38 @@ namespace layers {
     template <typename TDevice>
     real_t SsePostOutputLayer<TDevice>::calculateError()
     {
-        internal::ComputeSseFn fn;
-        fn.layerSize = this->size();
-        fn.patTypes  = helpers::getRawPointer(this->patTypes());
+    if(this->flagMseWeight())
+	{
+	    internal::ComputeSseFnWeighted fn;
+	    fn.layerSize = this->size();
+	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
+	    fn.weights   = helpers::getRawPointer(this->_mseWeight());
+	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
+	    
+	    real_t mse = (real_t)0.5 * thrust::transform_reduce(
+	         thrust::make_zip_iterator(thrust::make_tuple(this->_targets().begin(),   this->_actualOutputs().begin(),   thrust::counting_iterator<int>(0))),
+		 thrust::make_zip_iterator(thrust::make_tuple(this->_targets().begin()+n, this->_actualOutputs().begin()+n, thrust::counting_iterator<int>(0)+n)),
+		 fn,
+		 (real_t)0,
+		 thrust::plus<real_t>()
+            );
+	    return mse;
+	}else{
+	    internal::ComputeSseFn fn;
+	    fn.layerSize = this->size();
+	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
 
-        int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
+	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 
-        real_t mse = (real_t)0.5 * thrust::transform_reduce(
+	    real_t mse = (real_t)0.5 * thrust::transform_reduce(
             thrust::make_zip_iterator(thrust::make_tuple(this->_targets().begin(),   this->_actualOutputs().begin(),   thrust::counting_iterator<int>(0))),
             thrust::make_zip_iterator(thrust::make_tuple(this->_targets().begin()+n, this->_actualOutputs().begin()+n, thrust::counting_iterator<int>(0)+n)),
             fn,
             (real_t)0,
             thrust::plus<real_t>()
             );
-
-        return mse;
+	    return mse;
+	}
     }
 
     template <typename TDevice>
@@ -140,19 +204,36 @@ namespace layers {
     template <typename TDevice>
     void SsePostOutputLayer<TDevice>::computeBackwardPass()
     {
-        // calculate the errors
-        internal::ComputeOutputErrorFn fn;
-        fn.layerSize = this->size();
-        fn.patTypes  = helpers::getRawPointer(this->patTypes());
+     // calculate the errors
+	if(this->flagMseWeight())
+	{
+	    internal::ComputeOutputErrorFnWeighted fn;
+	    fn.layerSize = this->size();
+	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
+	    fn.weights   = helpers::getRawPointer(this->_mseWeight());
 
-        int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
+	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 
-        thrust::transform(
+	    thrust::transform(
+            thrust::make_zip_iterator(thrust::make_tuple(this->_actualOutputs().begin(),   this->_targets().begin(),   thrust::counting_iterator<int>(0))),
+            thrust::make_zip_iterator(thrust::make_tuple(this->_actualOutputs().begin()+n, this->_targets().begin()+n, thrust::counting_iterator<int>(0)+n)),
+            this->_outputErrors().begin(),
+            fn
+	    );
+	}else{
+	    internal::ComputeOutputErrorFn fn;
+	    fn.layerSize = this->size();
+	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
+
+	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
+
+	    thrust::transform(
             thrust::make_zip_iterator(thrust::make_tuple(this->_actualOutputs().begin(),   this->_targets().begin(),   thrust::counting_iterator<int>(0))),
             thrust::make_zip_iterator(thrust::make_tuple(this->_actualOutputs().begin()+n, this->_targets().begin()+n, thrust::counting_iterator<int>(0)+n)),
             this->_outputErrors().begin(),
             fn
             );
+	}
     }
 
 

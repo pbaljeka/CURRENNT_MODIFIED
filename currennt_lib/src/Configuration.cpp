@@ -155,7 +155,8 @@ Configuration::Configuration(int argc, const char *argv[])
         ("weight_noise_sigma",  po::value(&m_weightNoiseSigma)  ->default_value((real_t)0), "sets the standard deviation of the weight noise added for the gradient calculation on every batch")
         ("save_network",        po::value(&m_trainedNetwork)   ->default_value("trained_network.jsn"), "sets the file name of the trained network that will be produced")
 	/* Add 16-02-22 Wang: for WE updating */
-	("welearning_rate",       po::value(&m_weLearningRate) ->default_value((real_t)-1, "0"),  "sets the learning rate for we")
+	("welearning_rate",     po::value(&m_weLearningRate) ->default_value((real_t)-1, "0"),  "sets the learning rate for we")
+	("mseWeight",           po::value(&m_mseWeightPath)  ->default_value(""), "path to the MSE weight (binary float data)")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -389,6 +390,10 @@ Configuration::Configuration(int argc, const char *argv[])
 	    std::cout << "ERROR: Invalid configuration for WE updating" << std::endl;
 	    exit(1);
 	}
+    }
+
+    if (m_mseWeightPath.size()>0){
+	std::cout << "Using MSE Weight: " << m_mseWeightPath  << std::endl;
     }
     
     std::cout << std::endl;
@@ -635,6 +640,13 @@ const std::string& Configuration::weBankPath() const
 {
     return m_weBank;
 }
+
+const std::string& Configuration::mseWeightPath() const
+{
+    return m_mseWeightPath;
+}
+
+
 const std::string& Configuration::trainedParameterPath() const
 {
     return m_trainedParameter;

@@ -41,7 +41,8 @@ public:
 
     enum distribution_type_t {
         DISTRIBUTION_NORMAL,
-        DISTRIBUTION_UNIFORM
+        DISTRIBUTION_UNIFORM,
+	DISTRIBUTION_UNINORMALIZED
     };
 
     enum feedforwardformat_type_t {

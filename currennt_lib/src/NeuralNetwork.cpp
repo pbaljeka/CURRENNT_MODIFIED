@@ -347,6 +347,20 @@ bool NeuralNetwork<TDevice>::saveWe(const std::string weFile) const
 	return inputLayer->saveWe(weFile);
 }
 
+/* Add 0401 Wang: for MSE weight initialization*/
+template <typename TDevice>
+bool NeuralNetwork<TDevice>::initMseWeight(const std::string mseWeightPath)
+{
+    
+    layers::PostOutputLayer<TDevice>* outputLayer = dynamic_cast<layers::PostOutputLayer<TDevice>*>(m_layers.back().get());
+    if (!outputLayer){
+	throw std::runtime_error("The output layer is not a postoutput layer");
+	return false;
+    }
+    else
+	return outputLayer->readMseWeight(mseWeightPath);
+   
+}
 
 
 // explicit template instantiations

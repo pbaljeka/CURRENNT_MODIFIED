@@ -181,7 +181,11 @@ int trainerMain(const Configuration &config)
 	    neuralNetwork.initWeUpdate(config.weBankPath(), config.weDim(), config.weIDDim(), maxSeqLength*parallelSequences);
 	}
 	
-
+	/* Add 16-04-01 Wang: for MSE weight */
+	if (config.mseWeightPath().size()>0){
+	    neuralNetwork.initMseWeight(config.mseWeightPath());
+	}
+	
         if (!trainingSet->empty() && trainingSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
             throw std::runtime_error("Post output layer size != target pattern size of the training set");
         if (!validationSet->empty() && validationSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())

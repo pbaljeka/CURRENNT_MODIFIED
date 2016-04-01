@@ -95,11 +95,11 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
 		    parallelSequences, maxSeqLength, m_layers.back().get()); */
                 if (m_layers.empty()){   
 		    // first layer
-		    if (layerType == "skipadd" || layerType == "skippara")
+		    if (layerType == "skipadd" || layerType == "skippara_logistic" || layerType == "skippara_relu" || layerType == "skippara_tanh" || layerType == "skippara_identity")
 			throw std::runtime_error("SkipAdd and SkipPara layer can not be the first layer");
 		    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength);
 
-		}else if(layerType == "skipadd" || layerType == "skippara"){
+		}else if(layerType == "skipadd" || layerType == "skippara_logistic" || layerType == "skippara_relu" || layerType == "skippara_tanh" || layerType == "skippara_identity"){
 
 		    // SkipLayers: all the layers that link to the current skip layer
 		    //  here, it includes the last skip layer and the previous normal layer connected to this skip layer
@@ -347,6 +347,20 @@ bool NeuralNetwork<TDevice>::saveWe(const std::string weFile) const
 	return inputLayer->saveWe(weFile);
 }
 
+/* Add 0401 Wang: for MSE weight initialization*/
+template <typename TDevice>
+bool NeuralNetwork<TDevice>::initMseWeight(const std::string mseWeightPath)
+{
+    
+    layers::PostOutputLayer<TDevice>* outputLayer = dynamic_cast<layers::PostOutputLayer<TDevice>&>(*m_layers.back())
+    if (!outputLayer){
+	throw std::runtime_error("The output layer is not a postoutput layer");
+	return false;
+    }
+    else
+	return outputLayer->readMseWeight(mseWeightPath);
+   
+}
 
 
 // explicit template instantiations
