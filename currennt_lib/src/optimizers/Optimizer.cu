@@ -106,7 +106,7 @@ namespace optimizers {
 
 	// strange, why totalSequences? when parallel sequences are calculated, there may be bias
         error /= ds.totalSequences();
-	// error /= ds.totalTimesteps();
+	//error /= ds.totalTimesteps();
 
         *classError /= (real_t)ds.totalTimesteps();
 
