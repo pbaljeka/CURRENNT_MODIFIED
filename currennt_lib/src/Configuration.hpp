@@ -82,6 +82,9 @@ private:
     /* Add 0401 Wang: for mse weight */
     std::string m_mseWeightPath;  // path to the mse weight file
 
+    /* Add 0402 Wang: for bias of Highway gate */
+    real_t m_highwayBias;         // initial value for highway bias
+
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
     unsigned m_maxEpochs;
@@ -482,6 +485,7 @@ public:
     const unsigned& weDim() const;
     
     real_t weLearningRate() const;
+    const real_t& highwayGateBias() const;
 };
 
 

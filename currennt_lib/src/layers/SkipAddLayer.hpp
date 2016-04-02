@@ -31,7 +31,8 @@ namespace layers {
 	std::vector<Layer<TDevice>*> m_preLayers;
 	// to receive the errors directly from next skip add layer
 	// real_vector       m_outputErrorsFromSkipLayer;
-        
+	bool m_flagSkipInit; // this layer only take input from previous layer?
+
     public:
 		
 	// Construct the layer

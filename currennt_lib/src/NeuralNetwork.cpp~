@@ -352,7 +352,7 @@ template <typename TDevice>
 bool NeuralNetwork<TDevice>::initMseWeight(const std::string mseWeightPath)
 {
     
-    layers::PostOutputLayer<TDevice>* outputLayer = dynamic_cast<layers::PostOutputLayer<TDevice>&>(*m_layers.back())
+    layers::PostOutputLayer<TDevice>* outputLayer = dynamic_cast<layers::PostOutputLayer<TDevice>*>(m_layers.back().get());
     if (!outputLayer){
 	throw std::runtime_error("The output layer is not a postoutput layer");
 	return false;

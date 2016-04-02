@@ -13,6 +13,7 @@
 #include "../activation_functions/Logistic.cuh"
 #include "../activation_functions/Identity.cuh"
 #include "../activation_functions/Relu.cuh"
+#include "../Configuration.hpp"
 
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
@@ -190,9 +191,10 @@ namespace layers{
 	m_gateOutput                = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
 	m_gateErrors                = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
 
+	const Configuration &config = Configuration::instance();
 	// initializing the bias vector to a large negative value, let T(x) approach zero
 	thrust::fill(this->weights().begin() + this->size()*this->preSkipLayer()->size(),
-		     this->weights().end(), -1.50);
+		     this->weights().end(), config.highwayGateBias());
     }	
 
     // Destructor

@@ -79,6 +79,8 @@ private:
     std::string m_weBank;         // path to the we data
     std::string m_trainedParameter;  // path to the trained model, only model parameter will be read
         
+    /* Add 0401 Wang: for mse weight */
+    std::string m_mseWeightPath;  // path to the mse weight file
 
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
@@ -473,6 +475,7 @@ public:
     bool weUpdate() const;
 
     const std::string& weBankPath() const;
+    const std::string& mseWeightPath() const;
     const std::string& trainedParameterPath() const;
     const unsigned& weIDDim() const;
     

@@ -34,6 +34,12 @@ namespace layers{
     {
 	m_preLayers.assign(precedingLayers.begin(), precedingLayers.end());
 	// m_outputErrorsFromSkipLayer = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
+	
+	if (precedingLayers.size()<2){
+	    m_flagSkipInit = true;
+	}else{
+	    m_flagSkipInit = false;
+	}
     }	
 
     // Destructor
@@ -123,7 +129,11 @@ namespace layers{
     const std::string& SkipAddLayer<TDevice>::type() const
     {
 	static std::string s;
-	s = "skipadd";
+	if (m_flagSkipInit){
+	    s = "skipini";
+	}else{
+	    s = "skipadd";
+	}
         return s;
     }
    

@@ -196,6 +196,8 @@ Configuration::Configuration(int argc, const char *argv[])
         ("weights_uniform_max",  po::value(&m_weightsUniformMax) ->default_value((real_t)+0.1, "0.1"),  "sets the maximum value of the uniform distribution")
         ("weights_normal_sigma", po::value(&m_weightsNormalSigma)->default_value((real_t)0.1, "0.1"),   "sets the standard deviation of the normal distribution")
         ("weights_normal_mean",  po::value(&m_weightsNormalMean) ->default_value((real_t)0.0, "0"),     "sets the mean of the normal distribution")
+	/* Add 16-04-02 Wang: for initiliaizing the bias for gate of Highway network */
+	("highway_gate_bias",    po::value(&m_highwayBias) -> default_value((real_t)-1.50, "-1.50"),    "sets the bias for the sigmoid function in the gate of highway block")
         ;
 
     po::positional_options_description positionalOptions;
@@ -674,4 +676,9 @@ real_t Configuration::weLearningRate() const
 bool Configuration::revertStd() const
 {
     return m_revertStd;
+}
+
+const real_t& Configuration::highwayGateBias() const
+{
+    return m_highwayBias;
 }
