@@ -101,13 +101,14 @@ namespace {
     template <typename TActFn>
     struct ComputeAccumulateSkipBackError
     {
-	__host__ __device__ void operator() (const thrust::tuple<const real_t&, const real_t&, real_t&> &t) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, const real_t&, const real_t&, const real_t&, real_t&> &t) const
 	{
 	    // t.get<0>() T(x) (delta)
-	    // t.get<1>() e
-	    // t.get<2>() error back propagated
+	    // t.get<1>() x
+	    // t.get<2>() e
+	    // t.get<3>() error back propagated
 	    real_t delta = TActFn::deriv(t.get<1>());
-	    t.get<2>() = t.get<2>() + t.get<1>() - t.get<1>() * t.get<0>();
+	    t.get<3>() = t.get<3>() + t.get<2>() - t.get<2>()*;
 	}
     };
 
@@ -308,21 +309,22 @@ namespace layers{
 		// update the parameter of the gate
 		// this is an SkipPara or SkipAdd Layer, erros should be accumulated to m_outputErrorsFromSkipLayer
 		{{
-		    // W * ge + (1-T)*e
-		    // step1. accumulate W * ge to the tempLayer
-		    helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      tempLayer->size(),   this->size());
-		    helpers::Matrix<TDevice> plErrorsMatrix(&tempLayer->outputErrorsFromSkipLayer(),  tempLayer->size(),   
-							    this->curMaxSeqLength() * this->parallelSequences());
-		    helpers::Matrix<TDevice> deltasMatrix  (&this->gateErrors(), this->size(), this->curMaxSeqLength() * this->parallelSequences());
-		    plErrorsMatrix.assignProduct(weightsMatrix, false, deltasMatrix, false);
-
-		    // step2. accumulate the (1 - T) * e 
+			// t.get<0>() H(x)
+			// t.get<1>() T(x) (delta)
+			// t.get<2>() x
+			// t.get<3>() e
+			// t.get<4>() error back propagated
+		    
+		    // for get one step: T'(x), not just this->gateOutput()
+		    
 		    internal::ComputeAccumulateSkipBackError<TActFn> fn;
 		    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 		    thrust::for_each(
-		         thrust::make_zip_iterator(thrust::make_tuple(this->gateOutput().begin(),   this->outputErrors().begin(),
+		         thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin(), this->gateOutput().begin(),
+								      this->preSkipLayer()->outputs().begin(), this->outputErrors().begin(),
 								      tempLayer->outputErrorsFromSkipLayer().begin())),
-			 thrust::make_zip_iterator(thrust::make_tuple(this->gateOutput().begin()+n, this->outputErrors().begin()+n,
+			 thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin()+n, this->gateOutput().begin()+n,
+								      this->preSkipLayer()->outputs().begin()+n, this->outputErrors().begin()+n,
 								      tempLayer->outputErrorsFromSkipLayer().begin()+n)),
 			 fn
 			 );
@@ -344,7 +346,7 @@ namespace layers{
         // compute the input weight updates
         {{
             helpers::Matrix<TDevice> weightUpdatesMatrix(&this->_weightUpdates(),this->size(), this->size());
-            helpers::Matrix<TDevice> plOutputsMatrix    (&this->preSkipLayer()->outputs(), this->preSkipLayer()->size(), this->curMaxSeqLength() * this->parallelSequences());
+            helpers::Matrix<TDevice> plOutputsMatrix    (&this->preSkipLayer->outputs(), this->preSkipLayer()->size(), this->curMaxSeqLength() * this->parallelSequences());
             helpers::Matrix<TDevice> deltasMatrix       (&this->gateErrors(),  this->size(), this->curMaxSeqLength() * this->parallelSequences());
 
             weightUpdatesMatrix.assignProduct(plOutputsMatrix, false, deltasMatrix, true);

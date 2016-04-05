@@ -58,8 +58,8 @@ namespace layers{
 		     0.0
 		     );
 
-	thrust::fill(this->outputErrorsFromSkipLayer().begin(),
-		     this->outputErrorsFromSkipLayer().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+	thrust::fill(m_outputErrorsFromSkipLayer.begin(),
+		     m_outputErrorsFromSkipLayer.begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
 		     0.0);
 
 	// accumulating the outputs of previous layers
@@ -81,9 +81,9 @@ namespace layers{
     void SkipAddLayer<TDevice>::computeBackwardPass()
     {
 	// 
-	// at first, add the errors in both this->outputErrorsFromSkipLayer() and m_outputErrors
-	thrust::transform(this->outputErrorsFromSkipLayer().begin(),
-			  this->outputErrorsFromSkipLayer().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+	// at first, add the errors in both m_outputErrorsFromSkipLayer and m_outputErrors
+	thrust::transform(m_outputErrorsFromSkipLayer.begin(),
+			  m_outputErrorsFromSkipLayer.begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
 			  this->outputErrors().begin(),
 			  this->outputErrors().begin(),
 			  thrust::plus<real_t>()
@@ -93,7 +93,7 @@ namespace layers{
 	BOOST_REVERSE_FOREACH (Layer<TDevice> *layer, m_preLayers) {
 	    SkipLayer<TDevice>* tempLayer = dynamic_cast<SkipLayer<TDevice>*>(layer);
 	    if(tempLayer){
-		// this is an SkipAdd Layer, erros should be accumulated to this->outputErrorsFromSkipLayer()
+		// this is an SkipAdd Layer, erros should be accumulated to m_outputErrorsFromSkipLayer
 		thrust::transform(this->outputErrors().begin(),
 				  this->outputErrors().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
 				  tempLayer->outputErrorsFromSkipLayer().begin(),
@@ -131,7 +131,7 @@ namespace layers{
     template <typename TDevice>
     typename SkipAddLayer<TDevice>::real_vector& SkipAddLayer<TDevice>::outputErrorsFromSkipLayer()
     {
-        return this->outputErrorsFromSkipLayer();
+        return m_outputErrorsFromSkipLayer;
     }
     */
 

@@ -156,7 +156,7 @@ Configuration::Configuration(int argc, const char *argv[])
         ("save_network",        po::value(&m_trainedNetwork)   ->default_value("trained_network.jsn"), "sets the file name of the trained network that will be produced")
 	/* Add 16-02-22 Wang: for WE updating */
 	("welearning_rate",     po::value(&m_weLearningRate) ->default_value((real_t)-1, "0"),  "sets the learning rate for we")
-	("mseWeight",           po::value(&m_mseWeightPath)  ->default_value(""), "path to the MSE weight (binary float data)")
+	("mseWeight",           po::value(&m_readMseWeight)  ->default_value(""), "path to the MSE weight (binary float data)")
         ;
 
     po::options_description autosaveOptions("Autosave options");

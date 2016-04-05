@@ -4,8 +4,8 @@
  *
  ****/
 
-#ifndef LAYERS_SKIPADDLAYER_HPP
-#define LAYERS_SKIPADDLAYER_HPP
+#ifndef LAYERS_SKIPLAYER_HPP
+#define LAYERS_SKIPLAYER_HPP
 
 #include "SkipLayer.hpp"
 #include <boost/foreach.hpp>
@@ -22,7 +22,7 @@ namespace layers {
     
     // class definition
     template <typename TDevice>
-    class SkipAddLayer : public SkipLayer<TDevice>
+    class SkipLayer : public SkipLayer<TDevice>
     {
 	typedef typename TDevice::real_vector    real_vector;
         
@@ -33,7 +33,8 @@ namespace layers {
 	// real_vector       m_outputErrorsFromSkipLayer;
         
     public:
-		
+	
+	
 	// Construct the layer
 	SkipAddLayer(
 		     const helpers::JsonValue &layerChild,

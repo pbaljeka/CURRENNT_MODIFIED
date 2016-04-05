@@ -124,7 +124,7 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createSkipParaLayer(
 					   )
 {
     using namespace layers;
-    using namespace activation_functions;
+    using namespace activation_function;
 
     if (precedingLayers.size()!=2){
 	throw std::runtime_error(std::string("SkipParaLayer only allows two input paths"));
@@ -136,7 +136,7 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createSkipParaLayer(
 	}else if(layerType == "skippara_identity"){
 	    return new SkipParaLayer<TDevice, Identity>(layerChild, weightsSection, precedingLayers);	    
 	}else if(layerType == "skippara_relu"){
-	    return new SkipParaLayer<TDevice, Relu>(layerChild, weightsSection, precedingLayers);
+	    return new SkipParaLayer<TDevice, ReLu>(layerChild, weightsSection, precedingLayers);
 	}else{
 	    throw std::runtime_error(std::string("Unknown SkipPara type:")+layerType);
 	}

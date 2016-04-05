@@ -106,8 +106,11 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createSkipAddLayer(
 					   )
 {
     using namespace layers;
+    
+    /* Add 0405 Add skip ini */
+    //if (layerType != "skipadd"){
     if (layerType != "skipadd" && layerType != "skipini"){
-	throw std::runtime_error(std::string("The layer is not skipadd or skipini"));
+	throw std::runtime_error(std::string("The layer is not skipadd"));
     }else{
 	return new SkipAddLayer<TDevice>(layerChild, weightsSection, precedingLayers);
     }
