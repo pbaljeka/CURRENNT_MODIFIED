@@ -85,6 +85,9 @@ private:
     /* Add 0402 Wang: for bias of Highway gate */
     real_t m_highwayBias;         // initial value for highway bias
 
+    /* Add 0408 Wang: to tap in the output of arbiary layer */
+    int m_outputTapLayer;         // the ID of the layer to be tapped in (start from 0)
+
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
     unsigned m_maxEpochs;
@@ -486,6 +489,9 @@ public:
     
     real_t weLearningRate() const;
     const real_t& highwayGateBias() const;
+
+    
+    const int& outputFromWhichLayer() const;
 };
 
 

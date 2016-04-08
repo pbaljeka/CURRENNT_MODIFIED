@@ -136,6 +136,8 @@ Configuration::Configuration(int argc, const char *argv[])
         ("feature_period", po::value(&m_featurePeriod)->default_value(10), "sets the feature period in case of HTK output (in seconds)")
         ("ff_input_file",  po::value(&feedForwardInputFileList),                                  "sets the name(s) of the input file(s) in forward pass mode")
         ("revert_std",     po::value(&m_revertStd)->default_value(true), "if regression is performed, unstandardize the output activations so that features are on the original targets' scale")
+	/* Add 16-04-08 to tap in the output of arbitary layer */
+	("output_from",    po::value(&m_outputTapLayer)->default_value(-1), "get the output from which layer ? (default from the last output layer) ")
         ;
 
     po::options_description trainingOptions("Training options");
@@ -681,4 +683,9 @@ bool Configuration::revertStd() const
 const real_t& Configuration::highwayGateBias() const
 {
     return m_highwayBias;
+}
+
+const int& Configuration::outputFromWhichLayer() const
+{
+    return m_outputTapLayer;
 }

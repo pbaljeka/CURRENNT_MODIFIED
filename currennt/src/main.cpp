@@ -352,7 +352,8 @@ int trainerMain(const Configuration &config)
             //for (int i = 0; i < outputMeans.size(); ++i) 
              //   printf("outputMeans[%d] = %f outputStdevs[%d] = %f\n", i, outputMeans[i], i, outputStdevs[i]);
             bool unstandardize = config.revertStd(); 
-            if (unstandardize) {
+	    /* Modify 04-08, if output layer is not the last output, no standardize is required */
+            if (unstandardize && config.outputFromWhichLayer()<0) {
                 printf("Outputs will be scaled by mean and standard deviation specified in NC file.\n");
             }
 
@@ -457,6 +458,8 @@ int trainerMain(const Configuration &config)
                 // process all data set fractions
                 int fracIdx = 0;
                 boost::shared_ptr<data_sets::DataSetFraction> frac;
+		printf("Computing outputs from layer %d\n", config.outputFromWhichLayer());
+		    
                 while (((frac = feedForwardSet->getNextFraction()))) {
                     printf("Computing outputs for data fraction %d...", ++fracIdx);
                     fflush(stdout);
@@ -464,7 +467,7 @@ int trainerMain(const Configuration &config)
                     // compute the forward pass for the current data fraction and extract the outputs
                     neuralNetwork.loadSequences(*frac);
                     neuralNetwork.computeForwardPass();
-                    std::vector<std::vector<std::vector<real_t> > > outputs = neuralNetwork.getOutputs();
+                    std::vector<std::vector<std::vector<real_t> > > outputs = neuralNetwork.getOutputs(config.outputFromWhichLayer());
 
                     // write one output file per sequence
                     for (int psIdx = 0; psIdx < (int)outputs.size(); ++psIdx) {
@@ -477,7 +480,13 @@ int trainerMain(const Configuration &config)
                             }*/
                             //seqTag += ".htk";
                             //std::cout << seqTag << std::endl;
-                            boost::filesystem::path seqPath(frac->seqInfo(psIdx).seqTag + ".htk");
+			    std::string seqTagSuf;
+			    if (config.outputFromWhichLayer()<0){
+				seqTagSuf = ".htk";
+			    }else{
+				seqTagSuf = ".bin";
+			    }
+                            boost::filesystem::path seqPath(frac->seqInfo(psIdx).seqTag + seqTagSuf);
                             std::string filename(seqPath.filename().string());
                             boost::filesystem::path oPath = boost::filesystem::path(config.feedForwardOutputFile()) / seqPath.relative_path().parent_path();
                             boost::filesystem::create_directories(oPath);
@@ -487,19 +496,21 @@ int trainerMain(const Configuration &config)
                             int nComps = outputs[psIdx][0].size();
 
                             // write header
-                            unsigned tmp = (unsigned)outputs[psIdx].size();
-                            swap32(&tmp);
-                            file.write((const char*)&tmp, sizeof(unsigned));
-                            tmp = (unsigned)(config.featurePeriod() * 1e4);
-                            swap32(&tmp);
-                            file.write((const char*)&tmp, sizeof(unsigned));
-                            unsigned short tmp2 = (unsigned short)(nComps) * sizeof(float);
-                            swap16(&tmp2);
-                            file.write((const char*)&tmp2, sizeof(unsigned short));
-                            tmp2 = (unsigned short)(config.outputFeatureKind());
-                            swap16(&tmp2);
-                            file.write((const char*)&tmp2, sizeof(unsigned short));
-
+			    if (config.outputFromWhichLayer()<0){
+				unsigned tmp = (unsigned)outputs[psIdx].size();
+				swap32(&tmp);
+				file.write((const char*)&tmp, sizeof(unsigned));
+				tmp = (unsigned)(config.featurePeriod() * 1e4);
+				swap32(&tmp);
+				file.write((const char*)&tmp, sizeof(unsigned));
+				unsigned short tmp2 = (unsigned short)(nComps) * sizeof(float);
+				swap16(&tmp2);
+				file.write((const char*)&tmp2, sizeof(unsigned short));
+				tmp2 = (unsigned short)(config.outputFeatureKind());
+				swap16(&tmp2);
+				file.write((const char*)&tmp2, sizeof(unsigned short));
+			    }
+			    
                             float v;
                             // write the patterns
                             for (int timestep = 0; timestep < (int)outputs[psIdx].size(); ++timestep) {
@@ -509,11 +520,13 @@ int trainerMain(const Configuration &config)
                                         v = (float)outputs[psIdx][timestep + output_lag][outputIdx];
                                     else
                                         v = (float)outputs[psIdx][outputs[psIdx].size() - 1][outputIdx];
-                                    if (unstandardize) {
+                                    if (unstandardize && config.outputFromWhichLayer()<0) {
                                         v *= outputStdevs[outputIdx];
                                         v += outputMeans[outputIdx];
                                     }
-                                    swapFloat(&v); 
+				    if (config.outputFromWhichLayer()<0){
+					swapFloat(&v); 
+				    }
                                     file.write((const char*)&v, sizeof(float));
                                 }
                             }

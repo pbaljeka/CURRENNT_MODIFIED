@@ -196,10 +196,23 @@ layers::InputLayer<TDevice>& NeuralNetwork<TDevice>::inputLayer()
     return static_cast<layers::InputLayer<TDevice>&>(*m_layers.front());
 }
 
-template <typename TDevice>
+/* Modify 04-08 to tap in the output of arbitary layer */
+/*template <typename TDevice>
 layers::TrainableLayer<TDevice>& NeuralNetwork<TDevice>::outputLayer()
 {
     return static_cast<layers::TrainableLayer<TDevice>&>(*m_layers[m_layers.size()-2]);
+    }*/
+template <typename TDevice>
+layers::TrainableLayer<TDevice>& NeuralNetwork<TDevice>::outputLayer(const int layerID)
+{
+    // default case, the output
+    int tmpLayerID = layerID;
+    if (tmpLayerID < 0)
+	tmpLayerID = m_layers.size()-2;
+    // check
+    if (tmpLayerID > (m_layers.size()-2))
+	throw std::runtime_error(std::string("Invalid output_tap ID (out of range)"));
+    return static_cast<layers::TrainableLayer<TDevice>&>(*m_layers[tmpLayerID]);
 }
 
 template <typename TDevice>
@@ -285,9 +298,9 @@ void NeuralNetwork<TDevice>::exportWeights(const helpers::JsonDocument& jsonDoc)
 }
 
 template <typename TDevice>
-std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutputs()
+std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutputs(const int layerID)
 {
-    layers::TrainableLayer<TDevice> &ol = outputLayer();
+    layers::TrainableLayer<TDevice> &ol = outputLayer(layerID);
     
     std::vector<std::vector<std::vector<real_t> > > outputs;
     for (int patIdx = 0; patIdx < (int)ol.patTypes().size(); ++patIdx) {

@@ -87,7 +87,9 @@ public:
      *
      * @return The output layer
      */
-    layers::TrainableLayer<TDevice>& outputLayer();
+    /* Modify 04-08 Wang: to tap in the output of arbitary layer */
+    //layers::TrainableLayer<TDevice>& outputLayer();
+    layers::TrainableLayer<TDevice>& outputLayer(const int layerID=-1);
 
     /**
      * Returns the post output layer
@@ -146,7 +148,7 @@ public:
      *
      * @return Outputs of the processed fraction
      */
-    std::vector<std::vector<std::vector<real_t> > > getOutputs();
+    std::vector<std::vector<std::vector<real_t> > > getOutputs(const int layerID =-1);
 
     /* Add 16-02-22 Wang: for WE updating */
     // repare for we updateing
