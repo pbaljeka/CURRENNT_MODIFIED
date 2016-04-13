@@ -219,7 +219,8 @@ int trainerMain(const Configuration &config)
                 sdo = new optimizers::SteepestDescentOptimizer<TDevice>(
                     neuralNetwork, *trainingSet, *validationSet, *testSet,
                     config.maxEpochs(), config.maxEpochsNoBest(), config.validateEvery(), config.testEvery(),
-                    config.learningRate(), config.momentum(), config.weLearningRate()
+                    config.learningRate(), config.momentum(), config.weLearningRate(),
+		    config.lrDecayRate(), config.lrDecayEpoch()
                     );
                 optimizer.reset(sdo);
                 break;
@@ -306,8 +307,12 @@ int trainerMain(const Configuration &config)
                             saveNetwork(neuralNetwork, saveFileS.str(), config.learningRate(), config.weLearningRate());
                         }
                     }
-                    else
-                        infoRows += printfRow("  no    \n");
+                    else{
+			if (optimizer->checkLRdecay())
+			    infoRows += printfRow("  no(DecayLR) \n");			    
+			else
+			    infoRows += printfRow("  no    \n");
+		    }
                 }
                 else
                     infoRows += printfRow("        \n");

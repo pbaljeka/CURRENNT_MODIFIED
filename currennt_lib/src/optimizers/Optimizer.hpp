@@ -61,6 +61,11 @@ namespace optimizers {
         real_t m_curTrainingClassError;
         real_t m_curTestClassError;
 
+	// Add 0409 for learning_rate decay
+	bool m_flag_decay;   // whether the learning rate should be decayed
+	const int m_decayEpochNM; // after how many sub-optimal epochs for decaying
+	int m_waitAfterDecay;// how many epochs to wait before decay again
+
         std::vector<real_vector> m_curWeightUpdates;
         std::vector<real_vector> m_bestWeights;
 
@@ -78,7 +83,10 @@ namespace optimizers {
 	
 	/* Add 16-02-22 Wang: for WE updating */
 	virtual void _updateWeInput() =0;
-
+	
+	/* Add 04-09 for learning rate decay */
+	virtual bool _checkLRdecay();
+	virtual void _setLRdecayFalse();
     public:
         /**
          * Constructs the optimizer
@@ -101,9 +109,11 @@ namespace optimizers {
             int maxEpochs, 
             int maxEpochsNoBest,
             int validateEvery,
-            int testEvery
+            int testEvery,
+	    int decayEpochNM
             );
 
+	bool checkLRdecay();
         /**
          * Destructs the optimizer
          */

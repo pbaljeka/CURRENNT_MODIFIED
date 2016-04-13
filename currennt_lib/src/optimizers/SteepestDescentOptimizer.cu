@@ -151,12 +151,19 @@ namespace optimizers {
 	    // skip updateing the weights if learning rate is negative
 	    
 	}else{
+
+	    // Add 0409 learning weight decay
+	    if (this->_checkLRdecay()){
+		m_learningRateDecay = m_learningRateDecay*m_learningRateDecayRate;
+		this->_setLRdecayFalse(); // reset the flag_decay
+	    }
+
 	    for (size_t i = 1; i < this->_neuralNetwork().layers().size()-1; ++i) {
         	layers::TrainableLayer<TDevice> *layer = dynamic_cast<layers::TrainableLayer<TDevice>*>(this->_neuralNetwork().layers()[i].get());
 		if (!layer)
 		    continue;
 
-		updateWeightFn.learningRate = m_learningRate;
+		updateWeightFn.learningRate = m_learningRate*m_learningRateDecay;
 		if (layer->learningRate() >= 0.0)
 		    updateWeightFn.learningRate = layer->learningRate();
 		//std::cout << "layer " << layer->name() << ": learning rate " << updateWeightFn.learningRate << std::endl;
@@ -179,17 +186,21 @@ namespace optimizers {
     SteepestDescentOptimizer<TDevice>::SteepestDescentOptimizer(
         NeuralNetwork<TDevice> &neuralNetwork, data_sets::DataSet &trainingSet, data_sets::DataSet &validationSet,
         data_sets::DataSet &testSet, int maxEpochs, int maxEpochsNoBest, int validateEvery, int testEvery, 
-        real_t learningRate, real_t momentum, real_t weLearningRate)
-        : Optimizer<TDevice>(neuralNetwork, trainingSet, validationSet, testSet, maxEpochs, maxEpochsNoBest, validateEvery, testEvery)
+        real_t learningRate, real_t momentum, real_t weLearningRate, real_t learningRateDecayRate, int decayEpochNM)
+        : Optimizer<TDevice>(neuralNetwork, trainingSet, validationSet, testSet, maxEpochs, maxEpochsNoBest, validateEvery, testEvery, decayEpochNM)
         , m_learningRate    (learningRate)
         , m_learningRateFirst(learningRate)
 	, m_weLearningRate(weLearningRate)
+	, m_learningRateDecayRate(learningRateDecayRate)
         , m_momentum        (momentum)
     {
         // intialize the weight deltas vectors with zeros
         m_weightDeltas = this->_curWeightUpdates();
         for (size_t i = 0; i < m_weightDeltas.size(); ++i)
             thrust::fill(m_weightDeltas[i].begin(), m_weightDeltas[i].end(), 0);
+	
+	// Add 0409 for decaying the learning rate
+	m_learningRateDecay = 1.0;
     }
 
     template <typename TDevice>

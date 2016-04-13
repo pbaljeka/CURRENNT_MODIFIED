@@ -48,6 +48,8 @@ namespace optimizers {
 
         /* Add 16-02-22 Wang: for WE updating */
 	const real_t m_weLearningRate;
+	real_t m_learningRateDecay;
+	const real_t m_learningRateDecayRate; // to decay the learning rate
 
     protected:
         virtual void _updateWeights();
@@ -82,7 +84,9 @@ namespace optimizers {
             int testEvery,
             real_t learningRate,
             real_t momentum,
-	    real_t weLearningRate
+	    real_t weLearningRate,
+	    real_t learningRateDecayRate,
+	    int decayEpochNM
             );
 
         /**

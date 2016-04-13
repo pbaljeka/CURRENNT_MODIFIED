@@ -159,6 +159,8 @@ Configuration::Configuration(int argc, const char *argv[])
 	/* Add 16-02-22 Wang: for WE updating */
 	("welearning_rate",     po::value(&m_weLearningRate) ->default_value((real_t)-1, "0"),  "sets the learning rate for we")
 	("mseWeight",           po::value(&m_mseWeightPath)  ->default_value(""), "path to the MSE weight (binary float data)")
+	("lr_decay_rate",       po::value(&m_lr_decay_rate)  ->default_value(0.1), "The rate to decay learning rate (0.1)")
+	("lr_decay_epoch",      po::value(&m_lr_decay_epoch) ->default_value(-1),  "After how many no-best epochs should the lr be decayed (-1, no use)")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -688,4 +690,13 @@ const real_t& Configuration::highwayGateBias() const
 const int& Configuration::outputFromWhichLayer() const
 {
     return m_outputTapLayer;
+}
+
+const int& Configuration::lrDecayEpoch() const
+{
+    return m_lr_decay_epoch;
+}
+const real_t& Configuration::lrDecayRate() const
+{
+    return m_lr_decay_rate;
 }

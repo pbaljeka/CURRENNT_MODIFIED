@@ -88,6 +88,10 @@ private:
     /* Add 0408 Wang: to tap in the output of arbiary layer */
     int m_outputTapLayer;         // the ID of the layer to be tapped in (start from 0)
 
+    /* Add 0409 Wang: to decay the learning rate */
+    real_t m_lr_decay_rate;
+    int m_lr_decay_epoch;
+
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
     unsigned m_maxEpochs;
@@ -492,6 +496,9 @@ public:
 
     
     const int& outputFromWhichLayer() const;
+
+    const int& lrDecayEpoch() const;
+    const real_t& lrDecayRate() const;
 };
 
 

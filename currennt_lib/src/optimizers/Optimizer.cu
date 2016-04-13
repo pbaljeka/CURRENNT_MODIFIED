@@ -193,7 +193,7 @@ namespace optimizers {
     template <typename TDevice>
     Optimizer<TDevice>::Optimizer(NeuralNetwork<TDevice> &neuralNetwork, data_sets::DataSet &trainingSet, 
                                    data_sets::DataSet &validationSet, data_sets::DataSet &testSet,
-                                   int maxEpochs, int maxEpochsNoBest, int validateEvery, int testEvery)
+				  int maxEpochs, int maxEpochsNoBest, int validateEvery, int testEvery, int decayEpochNM)
         : m_neuralNetwork             (neuralNetwork)
         , m_trainingSet               (trainingSet)
         , m_validationSet             (validationSet)
@@ -212,6 +212,9 @@ namespace optimizers {
         , m_curValidationClassError   (0)
         , m_curTrainingClassError     (0)
         , m_curTestClassError         (0)
+	, m_decayEpochNM              (decayEpochNM)
+	, m_flag_decay                (false)
+	, m_waitAfterDecay            (0)
     {
         // initialize the best weights vectors
         m_bestWeights.resize(m_neuralNetwork.layers().size());
@@ -223,6 +226,11 @@ namespace optimizers {
 
         // initialize the current weight updates vectors
         m_curWeightUpdates = m_bestWeights;
+	
+	// Add 0409 to check the decayEpochNM
+	if (m_decayEpochNM >= m_maxEpochsNoBest){
+	    printf("WARNING: decayEpochNM should be less than m_maxEpochsNoBest. Now learning_rate will be prohibited\n");
+	}
     }
 
     template <typename TDevice>
@@ -322,8 +330,18 @@ namespace optimizers {
             if (!m_testSet.empty() && m_curEpoch % m_testEvery == 0)
                 m_curTestError = _processDataSet(m_testSet, false, &m_curTestClassError);
 
-            // check if we did not get a new lowest error for some training epochs 
-            // or if we reached the maximum number of training epochs
+            // Add 0409 for decaying the learning rate
+	    if (m_decayEpochNM > 0 && m_epochsSinceLowestError >= m_decayEpochNM && m_waitAfterDecay < 1){
+		m_flag_decay = true;
+		//m_epochsSinceLowestError = 0;
+		m_waitAfterDecay = m_decayEpochNM;
+	    }
+	    if (m_waitAfterDecay > 0){
+		m_waitAfterDecay--;
+	    }
+	    
+	    // check if we did not get a new lowest error for some training epochs 
+            // or if we reached the maximum number of training epochs	    	    
             if (m_epochsSinceLowestError >= m_maxEpochsNoBest || (m_maxEpochs >= 0 && m_curEpoch >= m_maxEpochs)) {
                 _restoreWeights();
                 m_finished = true;
@@ -371,6 +389,24 @@ namespace optimizers {
     void Optimizer<TDevice>::importParameter(const helpers::JsonDocument &jsonDoc)
     {
         _importWeights(jsonDoc, "optimizer_best_weights", &m_bestWeights);
+    }
+
+    
+    /* Add 04-09 for learning rate decay */
+    template <typename TDevice>
+    bool Optimizer<TDevice>::_checkLRdecay()
+    {
+	return m_flag_decay;
+    }
+    template <typename TDevice>
+    void Optimizer<TDevice>::_setLRdecayFalse()
+    {
+	m_flag_decay = false;
+    }
+    template <typename TDevice>
+    bool Optimizer<TDevice>::checkLRdecay()
+    {
+	return m_flag_decay;
     }
 
     // explicit template instantiations
