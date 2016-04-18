@@ -125,7 +125,13 @@ namespace layers{
 	return m_preLayers;
     }
 
-
+    template <typename TDevice>
+    typename SkipAddLayer<TDevice>::real_vector& SkipAddLayer<TDevice>::outputFromGate()
+    {
+	
+	return this->outputFromGate();
+    }
+    
     template <typename TDevice>
     const std::string& SkipAddLayer<TDevice>::type() const
     {

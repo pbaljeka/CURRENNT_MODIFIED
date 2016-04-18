@@ -53,7 +53,10 @@ namespace layers {
 	
 	// NN backward
 	virtual void computeBackwardPass();
-	
+
+	// fake output from gate
+	real_vector& outputFromGate();
+
 	// return all the preceding layers
 	std::vector<Layer<TDevice>*> PreLayers();
 	

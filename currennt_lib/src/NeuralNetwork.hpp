@@ -26,6 +26,7 @@
 #include "layers/InputLayer.hpp"
 #include "layers/TrainableLayer.hpp"
 #include "layers/PostOutputLayer.hpp"
+#include "layers/SkipParaLayer.hpp"
 #include "data_sets/DataSet.hpp"
 #include "helpers/JsonClassesForward.hpp"
 
@@ -91,6 +92,8 @@ public:
     //layers::TrainableLayer<TDevice>& outputLayer();
     layers::TrainableLayer<TDevice>& outputLayer(const int layerID=-1);
 
+    layers::SkipLayer<TDevice>* outGateLayer(const int layerID);
+    
     /**
      * Returns the post output layer
      *
@@ -148,7 +151,7 @@ public:
      *
      * @return Outputs of the processed fraction
      */
-    std::vector<std::vector<std::vector<real_t> > > getOutputs(const int layerID =-1);
+    std::vector<std::vector<std::vector<real_t> > > getOutputs(const int layerID =-1, const bool gateFromOutput=false);
 
     /* Add 16-02-22 Wang: for WE updating */
     // repare for we updateing
@@ -160,6 +163,10 @@ public:
     
     /* Add 04-01 Wang: for RMSE output mask */
     bool initMseWeight(const std::string mseWeightPath);
+
+    /* Add 0413 Wang: for weight mask */
+    bool initWeightMask(const std::string weightMaskPath);
+    void maskWeight();
 };
 
 

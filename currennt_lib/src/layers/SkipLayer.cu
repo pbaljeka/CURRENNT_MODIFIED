@@ -29,7 +29,13 @@ namespace layers{
     SkipLayer<TDevice>::~SkipLayer()
     {
     }
-	
+    
+    template <typename TDevice>
+    typename SkipLayer<TDevice>::real_vector& SkipLayer<TDevice>::outputFromGate()
+    {
+	printf("WARNING: Output from SkipLayer, WRONG!\n");
+	return m_outputErrorsFromSkipLayer;
+    }
     
     template <typename TDevice>
     typename SkipLayer<TDevice>::real_vector& SkipLayer<TDevice>::outputErrorsFromSkipLayer()

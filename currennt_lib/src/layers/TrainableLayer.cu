@@ -58,6 +58,7 @@ namespace layers {
         , m_internalWeightsPerBlock(internalWeightsPerBlock)
         , m_bias                   (layerChild->HasMember("bias") ? static_cast<real_t>((*layerChild)["bias"].GetDouble()) : 0)
         , m_learningRate           (layerChild->HasMember("learningRate") ? static_cast<real_t>((*layerChild)["learningRate"].GetDouble()) : -1)
+	, m_weightNum (-1)
     {
         //std::cout << "Creating layer " << this->name() << std::endl;
         // check if the bias value exists
@@ -136,6 +137,12 @@ namespace layers {
 
         m_weights       = weights;
         m_weightUpdates = weights;
+	
+	// Add 04013 Wang: for weight Mask
+	for (size_t i = 0; i < weights.size(); ++i)
+	    weights[i] = 1.0;
+	m_weightMask    = weights;          // make it the same length as weights matrix (for efficiency)
+	m_weightNum     = weights.size(); 
 
         // resize the output errors vector
         //m_outputErrors = Cpu::real_vector(this->_outputs().size(), (real_t)0);
@@ -187,11 +194,51 @@ namespace layers {
     {
         return m_weights;
     }
+    
+    template <typename TDevice>
+    const typename TrainableLayer<TDevice>::real_vector& TrainableLayer<TDevice>::weightMask() const
+    {
+	return m_weightMask;
+    }
 
     template <typename TDevice>
     const typename TrainableLayer<TDevice>::real_vector& TrainableLayer<TDevice>::weightUpdates() const
     {
         return m_weightUpdates;
+    }
+
+    // Add 0413 weight matrix
+    template <typename TDevice>
+    const int& TrainableLayer<TDevice>::weightNum() const
+    {
+	return m_weightNum;
+    }
+    template <typename TDevice>
+    void TrainableLayer<TDevice>::readWeightMask(std::vector<real_t>::iterator b, std::vector<real_t>::iterator e)
+    {
+	Cpu::real_vector tempVec;
+	bool tempflag;
+	tempflag = false;
+	tempVec.resize(m_weightNum);
+	std::vector<real_t>::iterator t = b;
+	for (int i = 0; t != e; ++t, i++){
+	    if (*t <0 || *t >1){
+		tempflag = true;
+		tempVec[i] = 1;
+	    }else
+		tempVec[i] = *t;
+	}
+	if (tempflag){
+	    throw std::runtime_error("DataMask is out of range [0, 1]");
+	}
+	    
+	// copy the mask data into m_weightMask
+	m_weightMask = tempVec;
+    }
+    template <typename TDevice>
+    void TrainableLayer<TDevice>::maskWeight()
+    {
+	thrust::transform(weights().begin(), weights().end(), weightMask().begin(), weights().begin(), thrust::multiplies<real_t>());
     }
 
     template <typename TDevice>

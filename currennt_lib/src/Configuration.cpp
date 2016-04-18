@@ -138,6 +138,7 @@ Configuration::Configuration(int argc, const char *argv[])
         ("revert_std",     po::value(&m_revertStd)->default_value(true), "if regression is performed, unstandardize the output activations so that features are on the original targets' scale")
 	/* Add 16-04-08 to tap in the output of arbitary layer */
 	("output_from",    po::value(&m_outputTapLayer)->default_value(-1), "get the output from which layer ? (default from the last output layer) ")
+	("output_from_gate",po::value(&m_outputGateOut)->default_value(false), "if the output layer is a gate layer, get output from gate? (default false)")
         ;
 
     po::options_description trainingOptions("Training options");
@@ -161,6 +162,8 @@ Configuration::Configuration(int argc, const char *argv[])
 	("mseWeight",           po::value(&m_mseWeightPath)  ->default_value(""), "path to the MSE weight (binary float data)")
 	("lr_decay_rate",       po::value(&m_lr_decay_rate)  ->default_value(0.1), "The rate to decay learning rate (0.1)")
 	("lr_decay_epoch",      po::value(&m_lr_decay_epoch) ->default_value(-1),  "After how many no-best epochs should the lr be decayed (-1, no use)")
+	/* Add 04-13 Wang: for weight mask*/
+	("weight_mask",         po::value(&m_weightMaskPath) ->default_value(""), "path to the weight mask")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -652,6 +655,10 @@ const std::string& Configuration::mseWeightPath() const
     return m_mseWeightPath;
 }
 
+const std::string& Configuration::weightMaskPath() const
+{
+    return m_weightMaskPath;
+}
 
 const std::string& Configuration::trainedParameterPath() const
 {
@@ -690,6 +697,12 @@ const real_t& Configuration::highwayGateBias() const
 const int& Configuration::outputFromWhichLayer() const
 {
     return m_outputTapLayer;
+}
+
+
+const bool& Configuration::outputFromGateLayer() const
+{
+    return m_outputGateOut;
 }
 
 const int& Configuration::lrDecayEpoch() const

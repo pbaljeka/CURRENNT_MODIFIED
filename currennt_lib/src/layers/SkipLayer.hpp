@@ -57,6 +57,8 @@ namespace layers {
 	// return all the preceding layers
 	//std::vector<Layer<TDevice>*> PreLayers();
 	
+	virtual real_vector& outputFromGate();
+	
 	// return reference to the m_outputErrorsFromSkipLayer
 	real_vector& outputErrorsFromSkipLayer();
     };

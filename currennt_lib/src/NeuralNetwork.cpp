@@ -216,6 +216,17 @@ layers::TrainableLayer<TDevice>& NeuralNetwork<TDevice>::outputLayer(const int l
 }
 
 template <typename TDevice>
+layers::SkipLayer<TDevice>* NeuralNetwork<TDevice>::outGateLayer(const int layerID)
+{
+    // default case, the output
+    int tmpLayerID = layerID;
+    // check
+    if (tmpLayerID > (m_layers.size()-2) || tmpLayerID < 0)
+	throw std::runtime_error(std::string("Invalid gate_output_tap ID (out of range)"));
+    return dynamic_cast<layers::SkipLayer<TDevice>*>(m_layers[tmpLayerID].get());
+}
+
+template <typename TDevice>
 layers::PostOutputLayer<TDevice>& NeuralNetwork<TDevice>::postOutputLayer()
 {
     return static_cast<layers::PostOutputLayer<TDevice>&>(*m_layers.back());
@@ -298,10 +309,17 @@ void NeuralNetwork<TDevice>::exportWeights(const helpers::JsonDocument& jsonDoc)
 }
 
 template <typename TDevice>
-std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutputs(const int layerID)
+std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutputs(const int layerID, const bool getGateOutput)
 {
     layers::TrainableLayer<TDevice> &ol = outputLayer(layerID);
     
+    layers::SkipLayer<TDevice> *olg;
+    if (getGateOutput){
+	olg = outGateLayer(layerID);
+    }else{
+	olg = NULL;
+    }
+		
     std::vector<std::vector<std::vector<real_t> > > outputs;
     for (int patIdx = 0; patIdx < (int)ol.patTypes().size(); ++patIdx) {
         switch (ol.patTypes()[patIdx]) {
@@ -310,10 +328,21 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
 
         case PATTYPE_NORMAL:
         case PATTYPE_LAST: {{
-            Cpu::real_vector pattern(ol.outputs().begin() + patIdx * ol.size(), ol.outputs().begin() + (patIdx+1) * ol.size());
-            int psIdx = patIdx % ol.parallelSequences();
-            outputs[psIdx].push_back(std::vector<real_t>(pattern.begin(), pattern.end()));
-            break;
+	    if (!getGateOutput){
+		Cpu::real_vector pattern(ol.outputs().begin() + patIdx * ol.size(), ol.outputs().begin() + (patIdx+1) * ol.size());
+		int psIdx = patIdx % ol.parallelSequences();
+		outputs[psIdx].push_back(std::vector<real_t>(pattern.begin(), pattern.end()));
+			
+	    }else{
+		if (olg){
+		    Cpu::real_vector pattern(olg->outputFromGate().begin() + patIdx * ol.size(), olg->outputFromGate().begin() + (patIdx+1) * ol.size());
+		    int psIdx = patIdx % ol.parallelSequences();
+		    outputs[psIdx].push_back(std::vector<real_t>(pattern.begin(), pattern.end()));
+		}else{
+		    throw std::runtime_error("Gate output tap ID invalid\n");
+		}
+	    }
+	    break;
         }}
 
         default:
@@ -380,6 +409,58 @@ bool NeuralNetwork<TDevice>::initMseWeight(const std::string mseWeightPath)
 	return outputLayer->readMseWeight(mseWeightPath);
    
 }
+
+/* Add 0413 Wang: for weight mask */
+template <typename TDevice>
+bool NeuralNetwork<TDevice>::initWeightMask(const std::string weightMaskPath)
+{
+    std::ifstream ifs(weightMaskPath.c_str(), std::ifstream::binary | std::ifstream::in);
+    if (!ifs.good())
+	throw std::runtime_error(std::string("Fail to open") + weightMaskPath);
+    
+    // get the number of we data
+    std::streampos numEleS, numEleE;
+    long int numEle;
+    numEleS = ifs.tellg();
+    ifs.seekg(0, std::ios::end);
+    numEleE = ifs.tellg();
+    numEle  = (numEleE-numEleS)/sizeof(real_t);
+    ifs.seekg(0, std::ios::beg);
+
+    real_t tempVal;
+    std::vector<real_t> tempVec;
+    for (unsigned int i = 0; i<numEle; i++){
+	ifs.read ((char *)&tempVal, sizeof(real_t));
+	tempVec.push_back(tempVal);
+    }
+    std::cout << "Read " << numEle << " weight mask elements" << std::endl;
+	
+    int pos = 0;
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layers::TrainableLayer<TDevice>* weightLayer = dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	if (weightLayer){
+	    if (weightLayer->weightNum()+pos > numEle){
+		throw std::runtime_error(std::string("Weight mask input is not long enough"));
+	    }else{
+		weightLayer->readWeightMask(tempVec.begin()+pos, tempVec.begin()+pos+weightLayer->weightNum());
+		pos = pos+weightLayer->weightNum();
+	    }
+	}
+    }
+    
+}
+
+template <typename TDevice>
+void NeuralNetwork<TDevice>::maskWeight()
+{
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layers::TrainableLayer<TDevice>* weightLayer = dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	if (weightLayer){
+	    weightLayer->maskWeight();
+	}
+    }
+}
+
 
 
 // explicit template instantiations

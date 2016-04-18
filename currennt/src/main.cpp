@@ -186,6 +186,11 @@ int trainerMain(const Configuration &config)
 	    neuralNetwork.initMseWeight(config.mseWeightPath());
 	}
 	
+	/* Add 0413 Wang: for weight mask */
+	if (config.weightMaskPath().size()>0){
+	    neuralNetwork.initWeightMask(config.weightMaskPath());
+	}
+	
         if (!trainingSet->empty() && trainingSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
             throw std::runtime_error("Post output layer size != target pattern size of the training set");
         if (!validationSet->empty() && validationSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
@@ -463,7 +468,11 @@ int trainerMain(const Configuration &config)
                 // process all data set fractions
                 int fracIdx = 0;
                 boost::shared_ptr<data_sets::DataSetFraction> frac;
-		printf("Computing outputs from layer %d\n", config.outputFromWhichLayer());
+		if (config.outputFromGateLayer()){
+		    printf("Computing outputs from layer %d gate output\n", config.outputFromWhichLayer());
+		}else
+		    printf("Computing outputs from layer %d \n", config.outputFromWhichLayer());
+		
 		    
                 while (((frac = feedForwardSet->getNextFraction()))) {
                     printf("Computing outputs for data fraction %d...", ++fracIdx);
@@ -472,7 +481,7 @@ int trainerMain(const Configuration &config)
                     // compute the forward pass for the current data fraction and extract the outputs
                     neuralNetwork.loadSequences(*frac);
                     neuralNetwork.computeForwardPass();
-                    std::vector<std::vector<std::vector<real_t> > > outputs = neuralNetwork.getOutputs(config.outputFromWhichLayer());
+                    std::vector<std::vector<std::vector<real_t> > > outputs = neuralNetwork.getOutputs(config.outputFromWhichLayer(), config.outputFromGateLayer());
 
                     // write one output file per sequence
                     for (int psIdx = 0; psIdx < (int)outputs.size(); ++psIdx) {

@@ -49,7 +49,10 @@ namespace layers {
         //real_vector m_outputErrors;
         real_vector m_weights;
         real_vector m_weightUpdates;
-
+	
+	// Add 04-13 for weight Mask
+	real_vector m_weightMask;  // the float data to store weight mask
+	int m_weightNum;     // the number of weights
     protected:
         real_vector& _weightUpdates();
 
@@ -131,7 +134,18 @@ namespace layers {
          * @return The current weight updates
          */
         const real_vector& weightUpdates() const;
-
+	
+	// Add 0413 weight matrix
+	/* Return the number of weight elements*/
+	const int& weightNum() const; 
+	// 
+	const real_vector& weightMask() const;
+	
+	/* Read in the weight mask */
+	void readWeightMask(std::vector<real_t>::iterator b, std::vector<real_t>::iterator e);
+	virtual void maskWeight();
+	
+	
         /**
          * Adds Gaussian weight noise with the given standard deviation.
          * 

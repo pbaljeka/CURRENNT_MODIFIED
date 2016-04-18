@@ -45,6 +45,8 @@ namespace {
 
         const real_t *weights;
         const real_t *weightUpdates;
+	/* Add 0413 weight Mask*/
+	const real_t *weightMask;
         real_t       *weightDeltas;
 
         __host__ __device__ real_t operator() (const int &weightIdx)
@@ -54,8 +56,9 @@ namespace {
             weightDeltas[weightIdx] = delta;
 
             // calculate the new weight
-            real_t newWeight = weights[weightIdx] + delta;
-
+	    // Modify 0413 weight Mask
+            // real_t newWeight = (weights[weightIdx] + delta;
+	    real_t newWeight = ((weights[weightIdx] + delta)*weightMask[weightIdx]);
             return newWeight;
         }
     };
@@ -171,7 +174,10 @@ namespace optimizers {
 		updateWeightFn.weights       = helpers::getRawPointer(layer->weights());
 		updateWeightFn.weightUpdates = helpers::getRawPointer(this->_curWeightUpdates()[i]);
 		updateWeightFn.weightDeltas  = helpers::getRawPointer(m_weightDeltas[i]);
-
+		
+		// Add 0413 for Weight mask
+		updateWeightFn.weightMask    = helpers::getRawPointer(layer->weightMask());
+		
 		thrust::transform(
 				  thrust::counting_iterator<int>(0),
 				  thrust::counting_iterator<int>((int)layer->weights().size()),

@@ -6,6 +6,7 @@
 
 
 #include "SkipParaLayer.hpp"
+#include "../helpers/JsonClasses.hpp"
 
 #include "../helpers/getRawPointer.cuh"
 #include "../helpers/Matrix.hpp"
@@ -191,10 +192,16 @@ namespace layers{
 	m_gateOutput                = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
 	m_gateErrors                = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
 
-	const Configuration &config = Configuration::instance();
-	// initializing the bias vector to a large negative value, let T(x) approach zero
-	thrust::fill(this->weights().begin() + this->size()*this->preSkipLayer()->size(),
-		     this->weights().end(), config.highwayGateBias());
+	// Modify 0418 Fatal Error: I should check the weightSection at first
+	if (weightsSection.isValid() && 
+	    weightsSection->HasMember(this->name().c_str())){
+	    // printf("\tRead saved gate bias");
+	}else{
+	    const Configuration &config = Configuration::instance();
+	    // initializing the bias vector to a large negative value, let T(x) approach zero
+	    thrust::fill(this->weights().begin() + this->size()*this->preSkipLayer()->size(),
+			 this->weights().end(), config.highwayGateBias());
+	}
     }	
 
     // Destructor
@@ -382,6 +389,11 @@ namespace layers{
 	return m_gateOutput;
     }
 
+    template <typename TDevice, typename TActFn>
+    typename SkipParaLayer<TDevice,TActFn>::real_vector& SkipParaLayer<TDevice,TActFn>::outputFromGate(){
+	return m_gateOutput;
+    }
+    
     template <typename TDevice, typename TActFn>
     typename SkipParaLayer<TDevice,TActFn>::real_vector& SkipParaLayer<TDevice,TActFn>::gateErrors(){
 	return m_gateErrors;

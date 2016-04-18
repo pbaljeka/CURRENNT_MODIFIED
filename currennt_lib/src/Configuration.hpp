@@ -87,11 +87,15 @@ private:
 
     /* Add 0408 Wang: to tap in the output of arbiary layer */
     int m_outputTapLayer;         // the ID of the layer to be tapped in (start from 0)
+    bool m_outputGateOut;         // whether to get output from the gate 
 
     /* Add 0409 Wang: to decay the learning rate */
     real_t m_lr_decay_rate;
     int m_lr_decay_epoch;
-
+    
+    /* Add 0413 Wang: to mask the weight of network */
+    std::string m_weightMaskPath;
+    
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
     unsigned m_maxEpochs;
@@ -486,6 +490,7 @@ public:
 
     const std::string& weBankPath() const;
     const std::string& mseWeightPath() const;
+    const std::string& weightMaskPath() const;
     const std::string& trainedParameterPath() const;
     const unsigned& weIDDim() const;
     
@@ -496,7 +501,7 @@ public:
 
     
     const int& outputFromWhichLayer() const;
-
+    const bool& outputFromGateLayer() const;
     const int& lrDecayEpoch() const;
     const real_t& lrDecayRate() const;
 };

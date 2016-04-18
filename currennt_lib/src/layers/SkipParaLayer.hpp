@@ -63,6 +63,10 @@ namespace layers {
 	// NN backward
 	virtual void computeBackwardPass();
 	
+	// Gate output
+	real_vector& outputFromGate();
+	
+	
 	// return all the preceding layers
 	Layer<TDevice>* preSkipLayer();
 

@@ -40,6 +40,9 @@ namespace optimizers {
         // process all data set fractions
         real_t error = 0;
         *classError = (real_t) ds.totalTimesteps();
+	
+	// Add 0413 Wang : for weight Mask
+	m_neuralNetwork.maskWeight();
 
         boost::shared_ptr<data_sets::DataSetFraction> frac;
         bool firstFraction = true;
