@@ -38,7 +38,7 @@
 namespace internal {
 namespace {
 
-    struct UpdateWeightFn
+    struct UpdateWeightFn_withMask
     {
         real_t learningRate;
         real_t momentum;
@@ -63,6 +63,28 @@ namespace {
         }
     };
 
+    struct UpdateWeightFn
+    {
+        real_t learningRate;
+        real_t momentum;
+
+        const real_t *weights;
+        const real_t *weightUpdates;
+        real_t       *weightDeltas;
+
+        __host__ __device__ real_t operator() (const int &weightIdx)
+        {
+            // calculate and store the weight delta
+            real_t delta = momentum * weightDeltas[weightIdx] - learningRate * weightUpdates[weightIdx];
+            weightDeltas[weightIdx] = delta;
+
+            // calculate the new weight
+	    // Modify 0413 weight Mask
+            real_t newWeight = weights[weightIdx] + delta;
+	    return newWeight;
+        }
+    };
+    
     /* Add 16-02-22 Wang: for WE updating */
     // functor to update the parameter
     struct UpdateWeWeightFn
@@ -147,43 +169,66 @@ namespace optimizers {
     template <typename TDevice>
     void SteepestDescentOptimizer<TDevice>::_updateWeights()
     {
-        internal::UpdateWeightFn updateWeightFn;
-        updateWeightFn.momentum     = m_momentum;
-	/* Add 16-02-22 Wang: for WE updating */
+        /* Add 16-02-22 Wang: for WE updating */
 	if (m_learningRate < 0){
 	    // skip updateing the weights if learning rate is negative
 	    
 	}else{
-
+	    
+	    
 	    // Add 0409 learning weight decay
 	    if (this->_checkLRdecay()){
 		m_learningRateDecay = m_learningRateDecay*m_learningRateDecayRate;
 		this->_setLRdecayFalse(); // reset the flag_decay
 	    }
-
+	    
+	    
+	    internal::UpdateWeightFn_withMask updateWeightFn;
+	    internal::UpdateWeightFn updateWeightFn2;
 	    for (size_t i = 1; i < this->_neuralNetwork().layers().size()-1; ++i) {
         	layers::TrainableLayer<TDevice> *layer = dynamic_cast<layers::TrainableLayer<TDevice>*>(this->_neuralNetwork().layers()[i].get());
 		if (!layer)
 		    continue;
-
-		updateWeightFn.learningRate = m_learningRate*m_learningRateDecay;
-		if (layer->learningRate() >= 0.0)
-		    updateWeightFn.learningRate = layer->learningRate();
-		//std::cout << "layer " << layer->name() << ": learning rate " << updateWeightFn.learningRate << std::endl;
-
-		updateWeightFn.weights       = helpers::getRawPointer(layer->weights());
-		updateWeightFn.weightUpdates = helpers::getRawPointer(this->_curWeightUpdates()[i]);
-		updateWeightFn.weightDeltas  = helpers::getRawPointer(m_weightDeltas[i]);
 		
-		// Add 0413 for Weight mask
-		updateWeightFn.weightMask    = helpers::getRawPointer(layer->weightMask());
+		// if mask is utilized
+		if (layer->flagUseWeightMask()){
+		    updateWeightFn.momentum     = m_momentum;
+		    updateWeightFn.learningRate = m_learningRate*m_learningRateDecay;
+		    if (layer->learningRate() >= 0.0)
+			updateWeightFn.learningRate = layer->learningRate();
+
+		    updateWeightFn.weights       = helpers::getRawPointer(layer->weights());
+		    updateWeightFn.weightUpdates = helpers::getRawPointer(this->_curWeightUpdates()[i]);
+		    updateWeightFn.weightDeltas  = helpers::getRawPointer(m_weightDeltas[i]);
 		
-		thrust::transform(
-				  thrust::counting_iterator<int>(0),
-				  thrust::counting_iterator<int>((int)layer->weights().size()),
-				  layer->weights().begin(),
-				  updateWeightFn
-				  );
+		    // Add 0413 for Weight mask
+		    updateWeightFn.weightMask    = helpers::getRawPointer(layer->weightMask());
+		
+		    thrust::transform(
+				      thrust::counting_iterator<int>(0),
+				      thrust::counting_iterator<int>((int)layer->weights().size()),
+				      layer->weights().begin(),
+				      updateWeightFn
+				      );
+		// if mask is not used
+		}else{
+		    updateWeightFn2.momentum     = m_momentum;
+		    updateWeightFn2.learningRate = m_learningRate*m_learningRateDecay;
+		    if (layer->learningRate() >= 0.0)
+			updateWeightFn2.learningRate = layer->learningRate();
+		    
+
+		    updateWeightFn2.weights       = helpers::getRawPointer(layer->weights());
+		    updateWeightFn2.weightUpdates = helpers::getRawPointer(this->_curWeightUpdates()[i]);
+		    updateWeightFn2.weightDeltas  = helpers::getRawPointer(m_weightDeltas[i]);
+				
+		    thrust::transform(
+				      thrust::counting_iterator<int>(0),
+				      thrust::counting_iterator<int>((int)layer->weights().size()),
+				      layer->weights().begin(),
+				      updateWeightFn2
+				      );
+		}
 	    }
 	}
     }
@@ -237,6 +282,26 @@ namespace optimizers {
 	// currently no need for momentum
         // Optimizer<TDevice>::_importWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", &m_weightDeltas);
     }
+
+    template <typename TDevice>
+    void SteepestDescentOptimizer<TDevice>::adjustLR(int decayTime)
+    {
+	for(int i =0; i < decayTime; i++)
+	    m_learningRateDecay = m_learningRateDecay*0.1;
+	printf("Adjust the learning rate to %e", m_learningRate*m_learningRateDecay);
+    }
+    
+    template <typename TDevice>
+    void SteepestDescentOptimizer<TDevice>::reinit()
+    {
+	// intialize the weight deltas vectors with zeros
+        m_weightDeltas = this->_curWeightUpdates();
+        for (size_t i = 0; i < m_weightDeltas.size(); ++i)
+            thrust::fill(m_weightDeltas[i].begin(), m_weightDeltas[i].end(), 0);
+	this->_reinit();
+
+    }
+    
 
     template <typename TDevice>
     void SteepestDescentOptimizer<TDevice>::setLearningRateFirst(real_t learningRateFirst)

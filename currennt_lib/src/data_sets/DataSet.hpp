@@ -212,7 +212,36 @@ namespace data_sets {
         Cpu::real_vector outputStdevs() const;
 
     };
+    
+    
+    // Add 0514 Wang: add one data struct to read mean and variance only
+    class DataSetMV
+    {
+    public:
+	const int& inputSize() const;
+	const int& outputSize() const;
+	const Cpu::real_vector& inputM() const;
+	const Cpu::real_vector& inputV() const;
+	const Cpu::real_vector& outputM() const;
+	const Cpu::real_vector& outputV() const;
+	
+	DataSetMV(const std::string &ncfile);
+	DataSetMV();
+	
+	~DataSetMV();
 
+    private:
+	int    m_inputPatternSize;
+        int    m_outputPatternSize;
+
+        Cpu::real_vector m_inputMeans;
+        Cpu::real_vector m_inputStdevs;
+
+        Cpu::real_vector m_outputMeans;
+        Cpu::real_vector m_outputStdevs;
+	
+    };
+    
 } // namespace data_sets
 
 

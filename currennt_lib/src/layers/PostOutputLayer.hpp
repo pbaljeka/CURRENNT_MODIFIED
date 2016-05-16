@@ -66,7 +66,7 @@ namespace layers {
             const helpers::JsonValue &layerChild, 
             Layer<TDevice>  &precedingLayer,
             int requiredSize,
-            bool                      createOutputs = true
+            bool createOutputs = true
             );
 	
 	/* Add 0401 for weighted MSE */
@@ -77,6 +77,8 @@ namespace layers {
          * Destructs the Layer
          */
         virtual ~PostOutputLayer();
+
+	Layer<TDevice>& precedingLayer();
 
         /**
          * @see Layer::loadSequences()
@@ -90,6 +92,12 @@ namespace layers {
          */
         virtual real_t calculateError() =0;
 
+	/**
+	 * Re-initialize the network
+	   only defines for Trainable Layers, here do nothing
+	 */
+	virtual void reInitWeight();
+	
     };
 
 } // namespace layers

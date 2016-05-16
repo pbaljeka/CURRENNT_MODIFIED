@@ -130,21 +130,21 @@ Configuration::Configuration(int argc, const char *argv[])
 
     po::options_description feedForwardOptions("Forward pass options");
     feedForwardOptions.add_options()
-        ("ff_output_format", po::value(&feedForwardFormatString)->default_value("single_csv"), "output format for output layer activations (htk, csv or single_csv)")
+        ("ff_output_format", po::value(&feedForwardFormatString)->default_value("single_csv"),  "output format for output layer activations (htk, csv or single_csv)")
         ("ff_output_file", po::value(&m_feedForwardOutputFile)->default_value("ff_output.csv"), "sets the name of the output file / directory in forward pass mode (directory for htk / csv modes)")
-        ("ff_output_kind", po::value(&m_outputFeatureKind)->default_value(9), "sets the parameter kind in case of HTK output (9: user, consult HTK book for details)")
-        ("feature_period", po::value(&m_featurePeriod)->default_value(10), "sets the feature period in case of HTK output (in seconds)")
-        ("ff_input_file",  po::value(&feedForwardInputFileList),                                  "sets the name(s) of the input file(s) in forward pass mode")
-        ("revert_std",     po::value(&m_revertStd)->default_value(true), "if regression is performed, unstandardize the output activations so that features are on the original targets' scale")
+        ("ff_output_kind", po::value(&m_outputFeatureKind)->default_value(9),                   "sets the parameter kind in case of HTK output (9: user, consult HTK book for details)")
+        ("feature_period", po::value(&m_featurePeriod)->default_value(10),                      "sets the feature period in case of HTK output (in seconds)")
+        ("ff_input_file",  po::value(&feedForwardInputFileList),                                "sets the name(s) of the input file(s) in forward pass mode")
+        ("revert_std",     po::value(&m_revertStd)->default_value(true),                        "for regression task, de-normalize the generated data using mean and variance in data.nc")
 	/* Add 16-04-08 to tap in the output of arbitary layer */
-	("output_from",    po::value(&m_outputTapLayer)->default_value(-1), "get the output from which layer ? (default from the last output layer) ")
-	("output_from_gate",po::value(&m_outputGateOut)->default_value(false), "if the output layer is a gate layer, get output from gate? (default false)")
+	("output_from",    po::value(&m_outputTapLayer)->default_value(-1),                     "from which layer to get the output ? (input layer is 0. Default from the output layer) ")
+	("output_from_gate",po::value(&m_outputGateOut)->default_value(false),                  "if the output layer is a gate layer, get output from gate instead of transformation units? (default false)")
         ;
 
     po::options_description trainingOptions("Training options");
     trainingOptions.add_options()
         ("train",               po::value(&m_trainingMode)     ->default_value(false),                 "enables the training mode")
-        ("stochastic", po::value(&m_hybridOnlineBatch)->default_value(false),                 "enables weight updates after every mini-batch of parallel calculated sequences")
+        ("stochastic", po::value(&m_hybridOnlineBatch)->default_value(false),                          "enables weight updates after every mini-batch of parallel calculated sequences")
         ("hybrid_online_batch", po::value(&m_hybridOnlineBatch)->default_value(false),                 "same as --stochastic (for compatibility)")
         ("shuffle_fractions",   po::value(&m_shuffleFractions) ->default_value(false),                 "shuffles mini-batches in stochastic gradient descent")
         ("shuffle_sequences",   po::value(&m_shuffleSequences) ->default_value(false),                 "shuffles sequences within and across mini-batches")
@@ -155,15 +155,19 @@ Configuration::Configuration(int argc, const char *argv[])
         ("optimizer",           po::value(&optimizerString)    ->default_value("steepest_descent"),    "sets the optimizer used for updating the weights")
         ("learning_rate",       po::value(&m_learningRate)     ->default_value((real_t)1e-5, "1e-5"),  "sets the learning rate for the steepest descent optimizer")
         ("momentum",            po::value(&m_momentum)         ->default_value((real_t)0.9,  "0.9"),   "sets the momentum for the steepest descent optimizer")
-        ("weight_noise_sigma",  po::value(&m_weightNoiseSigma)  ->default_value((real_t)0), "sets the standard deviation of the weight noise added for the gradient calculation on every batch")
+        ("weight_noise_sigma",  po::value(&m_weightNoiseSigma)  ->default_value((real_t)0),            "sets the standard deviation of the weight noise added for the gradient calculation on every batch")
         ("save_network",        po::value(&m_trainedNetwork)   ->default_value("trained_network.jsn"), "sets the file name of the trained network that will be produced")
 	/* Add 16-02-22 Wang: for WE updating */
-	("welearning_rate",     po::value(&m_weLearningRate) ->default_value((real_t)-1, "0"),  "sets the learning rate for we")
-	("mseWeight",           po::value(&m_mseWeightPath)  ->default_value(""), "path to the MSE weight (binary float data)")
-	("lr_decay_rate",       po::value(&m_lr_decay_rate)  ->default_value(0.1), "The rate to decay learning rate (0.1)")
-	("lr_decay_epoch",      po::value(&m_lr_decay_epoch) ->default_value(-1),  "After how many no-best epochs should the lr be decayed (-1, no use)")
+	("welearning_rate",     po::value(&m_weLearningRate) ->default_value((real_t)-1, "0"),         "sets the learning rate for we.")
+	("mseWeight",           po::value(&m_mseWeightPath)  ->default_value(""),                      "path to the weight for calculating the SSE and back-propagation (binary float data)")
+	("lr_decay_rate",       po::value(&m_lr_decay_rate)  ->default_value(0.1),                     "the rate to decay learning rate (0.1)")
+	("lr_decay_epoch",      po::value(&m_lr_decay_epoch) ->default_value(-1),                      "ffter how many no-best epochs should the lr be decayed (-1, no use)")
 	/* Add 04-13 Wang: for weight mask*/
-	("weight_mask",         po::value(&m_weightMaskPath) ->default_value(""), "path to the weight mask")
+	("weight_mask",         po::value(&m_weightMaskPath) ->default_value(""),                      "path to the network transformation matrix mask. The size of the file is identitcal to total number of parameters of the network (binary float data)")
+	
+	/* Add 0504 Wang: for MDN flag*/
+	("mdn_config",          po::value(&m_mdnFlagPath)    ->default_value(""),                      "path to the MDN flag. ")
+	("mdn_samplePara",      po::value(&m_mdnSamplingPara)->default_value((real_t)-3.0, "-3.0"),    "parameter for MDN sampling. mdn_samplePara > 0: sampling output from the distribution with the variance multiplied by mdn_samplePara. mdn_samplePara: -1.0, generate the parameter of the distribution. mdn_samplePara < -1.0: not use mdn and mdn generation.")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -190,10 +194,11 @@ Configuration::Configuration(int argc, const char *argv[])
         ("cache_path",        po::value(&m_cachePath)         ->default_value(""),        "sets the cache path where the .nc data is cached for random access")
 	/* Add 16-02-22 Wang: for WE updating */
 	("weExternal",          po::value(&m_weUpdate) ->default_value(false),    "whether update the input word embedding vectors (false)")
-	("weIDDim",           po::value(&m_weIDDim)    ->default_value(-1), "the WE index is the ?-th dimension of the input vector? (-1)")
-	("weDim",             po::value(&m_weDim)      ->default_value(0), "the dimension of the word embedding vectors (0)")
-	("weBank",            po::value(&m_weBank)     ->default_value(""), "the path to the word vectors")
+	("weIDDim",           po::value(&m_weIDDim)    ->default_value(-1),       "the WE index is the ?-th dimension of the input vector? (-1)")
+	("weDim",             po::value(&m_weDim)      ->default_value(0),        "the dimension of the word embedding vectors (0)")
+	("weBank",            po::value(&m_weBank)     ->default_value(""),       "the path to the word vectors")
 	("trainedModel",      po::value(&m_trainedParameter) ->default_value(""), "the path to the trained model paratemeter")
+	("datamv",            po::value(&m_datamvPath)       ->default_value(""), "the path to the data mv file. This file can be read in and initialize MDN parameter (now not in use)")
         ;
 
     po::options_description weightsInitializationOptions("Weight initialization options");
@@ -712,4 +717,24 @@ const int& Configuration::lrDecayEpoch() const
 const real_t& Configuration::lrDecayRate() const
 {
     return m_lr_decay_rate;
+}
+
+const std::string& Configuration::mdnFlagPath() const
+{
+    return m_mdnFlagPath;
+}
+
+bool Configuration::mdnFlag() const
+{
+    return m_mdnFlagPath.length()>0;
+}
+
+const std::string& Configuration::datamvPath() const
+{
+    return m_datamvPath;
+}
+
+const real_t& Configuration::mdnPara() const
+{
+    return m_mdnSamplingPara;
 }

@@ -58,6 +58,8 @@ namespace layers {
 	
 	/* Add 16-02-22 Wang: for WE updating */
 	bool              m_InputWeUpdate;    // the whether layer is the input with we to be updated?
+	                                      // we can not define it in Trainable layer because input layer is
+	                                      // not derived from trainable layer. 
 	cpu_real_vector   m_outputErrorsCopy; // make a CPU copy
 
     protected:
@@ -182,7 +184,7 @@ namespace layers {
          * Computes the backward pass, including the weight updates
          */
         virtual void computeBackwardPass() =0;
-
+	
         /**
          * Stores the description of the layer in a JSON object
          *
@@ -190,6 +192,13 @@ namespace layers {
          * @param allocator   The allocator to use
          */
         virtual void exportLayer(const helpers::JsonValue &layersArray, const helpers::JsonAllocator &allocator) const;
+
+	/**
+	 * Re-initialize the network
+	   only defines for Trainable Layers
+	 */
+	virtual void reInitWeight() = 0;
+	
     };
 
 } // namespace layers

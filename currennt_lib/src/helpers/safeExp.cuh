@@ -38,7 +38,53 @@ namespace helpers {
         else
             return exp(x);
     }
-
+    
+    template <typename T>
+    static inline __host__ __device__ T logAdd(T x, T y)
+    {
+	
+	if (x>y)
+	    {
+		if ((y-x) < NumericLimits<T>::minLogExp())
+		    {
+			if (x < NumericLimits<T>::lSMALL())
+			    return NumericLimits<T>::logZero();
+			else
+			    return x;
+		    }
+		else
+		    {
+			return x + log(1.0 + exp(y-x));
+		    }
+	    }
+	else
+	    {
+		if ((x-y) < NumericLimits<T>::minLogExp())
+		    {
+			if (y < NumericLimits<T>::lSMALL())
+			    return NumericLimits<T>::logZero();
+			else
+			    return y;
+		    }
+		else
+		    {
+			return y + log(1.0 + exp(x-y));
+		    }
+	    }
+    }
+    
+    template <typename T>
+    static inline __host__ __device__ T safeLog(T x)
+    {
+	if (x < NumericLimits<T>::minLarg())
+	    {
+		return NumericLimits<T>::logZero();
+	    }
+	else
+	    {
+		return log(x);
+	    }
+    }
 } // namespace helpers
 
 

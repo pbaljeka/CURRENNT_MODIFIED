@@ -35,8 +35,9 @@
 
 
 template <typename TDevice>
-NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int parallelSequences, int maxSeqLength, 
-                                      int inputSizeOverride = -1, int outputSizeOverride = -1)
+NeuralNetwork<TDevice>::NeuralNetwork(
+	const helpers::JsonDocument &jsonDoc, int parallelSequences, int maxSeqLength, 
+	int inputSizeOverride = -1, int outputSizeOverride = -1)
 {
     try {
 	
@@ -58,7 +59,9 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
         }
 
         // extract the layers
-        for (rapidjson::Value::ValueIterator layerChild = layersSection.Begin(); layerChild != layersSection.End(); ++layerChild) {
+        for (rapidjson::Value::ValueIterator layerChild = layersSection.Begin(); 
+	     layerChild != layersSection.End(); 
+	     ++layerChild) {
             
 	    // check the layer child type
             if (!layerChild->IsObject())
@@ -74,7 +77,8 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
             if (inputSizeOverride > 0 && layerType == "input") {
               (*layerChild)["size"].SetInt(inputSizeOverride);
             }
-	    /*  Does not work yet, need another way to identify a) postoutput layer (last!) and then the corresponging output layer and type!
+	    /*  Does not work yet, need another way to identify a) postoutput layer (last!) and 
+                then the corresponging output layer and type!
 		if (outputSizeOverride > 0 && (*layerChild)["name"].GetString() == "output") {
 		(*layerChild)["size"].SetInt(outputSizeOverride);
 		}
@@ -89,27 +93,33 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
 		/* Add 02-24 Wang for Residual Network*/
 		/*
                 if (m_layers.empty())
-                	layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength);
+		layer = LayerFactory<TDevice>::createLayer(layerType, 
+		&*layerChild, weightsSection, parallelSequences, maxSeqLength);
                 else
-                    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, 
+                    layer = LayerFactory<TDevice>::createLayer(layerType, 
+		    &*layerChild, weightsSection, 
 		    parallelSequences, maxSeqLength, m_layers.back().get()); */
                 if (m_layers.empty()){   
 		    // first layer
 		    if (layerType == "skipadd" || layerType == "skipini" || 
 			layerType == "skippara_logistic" || layerType == "skippara_relu" || 
 			layerType == "skippara_tanh" || layerType == "skippara_identity")
-			throw std::runtime_error("SkipAdd and SkipPara layer can not be the first layer");
-		    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, parallelSequences, maxSeqLength);
+			throw std::runtime_error("SkipAdd, SkipPara can not be the first layer");
+		    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, 
+							       weightsSection, parallelSequences, 
+							       maxSeqLength);
 
 		}else if(layerType == "skipadd" || layerType == "skipini" ||
 			 layerType == "skippara_logistic" || layerType == "skippara_relu" || 
 			 layerType == "skippara_tanh" || layerType == "skippara_identity"){
 
 		    // SkipLayers: all the layers that link to the current skip layer
-		    //  here, it includes the last skip layer and the previous normal layer connected to this skip layer
+		    //  here, it includes the last skip layer and the previous normal 
+		    //  layer connected to this skip layer
 		    std::vector<layers::Layer<TDevice>*> SkipLayers;
 		    // for skipadd layer:
-		    //   no need to check whether the last skiplayer is directly connected to current skiplayer
+		    //   no need to check whether the last skiplayer is directly 
+		    //   connected to current skiplayer
 		    //   in that case, F(x) + x = 2*x, the gradients will be multiplied by 2
 		    // for skippara layer:
 		    //   need to check, because H(x)*T(x)+x(1-T(x)) = x if H(x)=x
@@ -120,22 +130,26 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
 		    SkipLayers.push_back(m_layers.back().get());
 		    
 		    if (layerType == "skipadd" || layerType == "skipini")
-			layer = LayerFactory<TDevice>::createSkipAddLayer(layerType, &*layerChild, weightsSection, parallelSequences, 
-									  maxSeqLength, SkipLayers);
+			layer = LayerFactory<TDevice>::createSkipAddLayer(
+							layerType, &*layerChild, weightsSection, 
+							parallelSequences, 
+							maxSeqLength, SkipLayers);
 		    else
-			layer = LayerFactory<TDevice>::createSkipParaLayer(layerType, &*layerChild, weightsSection, parallelSequences, 
-									   maxSeqLength, SkipLayers);
-		    
+			layer = LayerFactory<TDevice>::createSkipParaLayer(
+							layerType, &*layerChild, weightsSection, 
+							parallelSequences, 
+							maxSeqLength, SkipLayers);
 		    
 		    // add the skipadd layer to Network buffer
 		    m_skipAddLayers.push_back(layer);
 		
 		}else{
 		    // normal layers
-                    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, weightsSection, 
-							       parallelSequences, maxSeqLength, m_layers.back().get());		
+                    layer = LayerFactory<TDevice>::createLayer(
+							layerType, &*layerChild, weightsSection, 
+							parallelSequences, 
+							maxSeqLength, m_layers.back().get());
 		}
-
                 m_layers.push_back(boost::shared_ptr<layers::Layer<TDevice> >(layer));
 		
             }
@@ -170,7 +184,8 @@ NeuralNetwork<TDevice>::NeuralNetwork(const helpers::JsonDocument &jsonDoc, int 
         for (size_t i = 0; i < m_layers.size(); ++i) {
             for (size_t j = 0; j < m_layers.size(); ++j) {
                 if (i != j && m_layers[i]->name() == m_layers[j]->name())
-                    throw std::runtime_error(std::string("Different layers have the same name '") + m_layers[i]->name() + "'");
+                    throw std::runtime_error(std::string("Different layers have the same name '") + 
+					     m_layers[i]->name() + "'");
             }
         }
     }
@@ -203,16 +218,16 @@ layers::TrainableLayer<TDevice>& NeuralNetwork<TDevice>::outputLayer()
     return static_cast<layers::TrainableLayer<TDevice>&>(*m_layers[m_layers.size()-2]);
     }*/
 template <typename TDevice>
-layers::TrainableLayer<TDevice>& NeuralNetwork<TDevice>::outputLayer(const int layerID)
+layers::Layer<TDevice>& NeuralNetwork<TDevice>::outputLayer(const int layerID)
 {
     // default case, the output
     int tmpLayerID = layerID;
     if (tmpLayerID < 0)
 	tmpLayerID = m_layers.size()-2;
     // check
-    if (tmpLayerID > (m_layers.size()-2))
+    if (tmpLayerID > (m_layers.size()-1))
 	throw std::runtime_error(std::string("Invalid output_tap ID (out of range)"));
-    return static_cast<layers::TrainableLayer<TDevice>&>(*m_layers[tmpLayerID]);
+    return (*m_layers[tmpLayerID]);
 }
 
 template <typename TDevice>
@@ -225,6 +240,14 @@ layers::SkipLayer<TDevice>* NeuralNetwork<TDevice>::outGateLayer(const int layer
 	throw std::runtime_error(std::string("Invalid gate_output_tap ID (out of range)"));
     return dynamic_cast<layers::SkipLayer<TDevice>*>(m_layers[tmpLayerID].get());
 }
+
+template <typename TDevice>
+layers::MDNLayer<TDevice>* NeuralNetwork<TDevice>::outMDNLayer()
+{
+    return dynamic_cast<layers::MDNLayer<TDevice>*>(m_layers[m_layers.size()-1].get());
+}
+
+
 
 template <typename TDevice>
 layers::PostOutputLayer<TDevice>& NeuralNetwork<TDevice>::postOutputLayer()
@@ -298,6 +321,12 @@ void NeuralNetwork<TDevice>::exportWeights(const helpers::JsonDocument& jsonDoc)
     	layers::TrainableLayer<TDevice> *trainableLayer = dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
         if (trainableLayer)
             trainableLayer->exportWeights(&weightsObject, &jsonDoc->GetAllocator());
+	// Modify 0507 Wang: for mdn PostProcess Layer
+	else{
+	    layers::MDNLayer<TDevice> *mdnlayer = dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
+	    if (mdnlayer)
+		mdnlayer->exportConfig(&weightsObject, &jsonDoc->GetAllocator());
+	}
     }
 
     // if the section already exists, we delete it first
@@ -309,45 +338,92 @@ void NeuralNetwork<TDevice>::exportWeights(const helpers::JsonDocument& jsonDoc)
 }
 
 template <typename TDevice>
-std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutputs(const int layerID, const bool getGateOutput)
+std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutputs(
+    const int layerID, const bool getGateOutput, const real_t mdnoutput)
 {
-    layers::TrainableLayer<TDevice> &ol = outputLayer(layerID);
-    
+    std::vector<std::vector<std::vector<real_t> > > outputs;
     layers::SkipLayer<TDevice> *olg;
-    if (getGateOutput){
+    layers::MDNLayer<TDevice> *olm;
+    int tempLayerId;
+    unsigned char genMethod;
+
+    enum genMethod {ERROR = 0, GATEOUTPUT, MDNSAMPLING, MDNPARAMETER, NORMAL};
+    
+    /* specify old, olm, tempLayerId
+       -2.0 is chosen for convience.
+       < -2.0: no MDN generation
+       > -2.0 && < 0: generate MDN parameters (mdnoutput = -1.0)
+       >0 : generate samples from MDN with the variance = variance * mdnoutput */
+
+    if (mdnoutput >= -2.0 && getGateOutput){
+	genMethod = ERROR;
+	throw std::runtime_error("MDN output and gate output can not be generated together");
+    }else if (mdnoutput < -2.0 && getGateOutput){
 	olg = outGateLayer(layerID);
+	olm = NULL;
+	tempLayerId = layerID;
+	if (olg == NULL)
+	    throw std::runtime_error("Gate output tap ID invalid\n");
+	genMethod = GATEOUTPUT;
+    }else if (mdnoutput >= -2.0 && !getGateOutput){
+	olg = NULL;
+	olm = outMDNLayer();
+	if (olm == NULL)
+	    throw std::runtime_error("No MDN layer in the current network");
+	olm->getOutput(mdnoutput); 
+	tempLayerId = m_layers.size()-1;
+	genMethod = (mdnoutput < 0.0) ? MDNPARAMETER:MDNSAMPLING;
     }else{
 	olg = NULL;
+	olm = NULL;
+	tempLayerId = layerID;
+	genMethod = NORMAL;
     }
-		
-    std::vector<std::vector<std::vector<real_t> > > outputs;
+    
+    // retrieve the output
+    layers::Layer<TDevice> &ol  = outputLayer(tempLayerId);
     for (int patIdx = 0; patIdx < (int)ol.patTypes().size(); ++patIdx) {
-        switch (ol.patTypes()[patIdx]) {
-        case PATTYPE_FIRST:
-            outputs.resize(outputs.size() + 1);
-
-        case PATTYPE_NORMAL:
-        case PATTYPE_LAST: {{
-	    if (!getGateOutput){
-		Cpu::real_vector pattern(ol.outputs().begin() + patIdx * ol.size(), ol.outputs().begin() + (patIdx+1) * ol.size());
-		int psIdx = patIdx % ol.parallelSequences();
-		outputs[psIdx].push_back(std::vector<real_t>(pattern.begin(), pattern.end()));
-			
-	    }else{
-		if (olg){
-		    Cpu::real_vector pattern(olg->outputFromGate().begin() + patIdx * ol.size(), olg->outputFromGate().begin() + (patIdx+1) * ol.size());
+	switch (ol.patTypes()[patIdx]) {
+	case PATTYPE_FIRST:
+	    outputs.resize(outputs.size() + 1);
+	    
+	case PATTYPE_NORMAL:
+	case PATTYPE_LAST: {
+	    switch (genMethod){
+	    case MDNSAMPLING:
+	    case NORMAL:
+		{
+		    Cpu::real_vector pattern(ol.outputs().begin() + patIdx * ol.size(), 
+					     ol.outputs().begin() + (patIdx+1) * ol.size());
 		    int psIdx = patIdx % ol.parallelSequences();
 		    outputs[psIdx].push_back(std::vector<real_t>(pattern.begin(), pattern.end()));
-		}else{
-		    throw std::runtime_error("Gate output tap ID invalid\n");
+		    break;
 		}
+	    case MDNPARAMETER:
+		{
+		    
+		    Cpu::real_vector pattern(
+				olm->mdnParaVec().begin()+patIdx*olm->mdnParaDim(), 
+				olm->mdnParaVec().begin()+(patIdx+1)*olm->mdnParaDim());
+		    int psIdx = patIdx % ol.parallelSequences();
+		    outputs[psIdx].push_back(std::vector<real_t>(pattern.begin(), pattern.end()));
+		    break;
+		}
+	    case GATEOUTPUT:
+		{
+		    Cpu::real_vector pattern(olg->outputFromGate().begin() + patIdx * ol.size(),
+					     olg->outputFromGate().begin()+(patIdx+1) * ol.size());
+		    int psIdx = patIdx % ol.parallelSequences();
+		    outputs[psIdx].push_back(std::vector<real_t>(pattern.begin(), pattern.end()));
+		    break;
+		}
+	    default:
+		break;   
 	    }
+	}
+	default:
 	    break;
-        }}
-
-        default:
-            break;
-        }
+	}
     }
 
     return outputs;
@@ -461,6 +537,30 @@ void NeuralNetwork<TDevice>::maskWeight()
     }
 }
 
+template <typename TDevice>
+void NeuralNetwork<TDevice>::reInitWeight()
+{
+    printf("Reinitialize the weight\n");
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layer->reInitWeight();
+    }
+}
+
+template <typename TDevice>
+void NeuralNetwork<TDevice>::initOutputForMDN(const data_sets::DataSetMV &datamv)
+{
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layers::MDNLayer<TDevice>* mdnLayer = dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
+	if (mdnLayer){
+	    mdnLayer->initPreOutput(datamv.outputM(), datamv.outputV());
+	    printf("MDN initialization \t");
+	    if (datamv.outputM().size()<1)
+		printf("using global zero mean and uni variance");
+	    else
+		printf("using data mean and variance");
+	}
+    }
+}
 
 
 // explicit template instantiations

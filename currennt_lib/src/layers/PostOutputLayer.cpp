@@ -62,7 +62,9 @@ namespace layers {
         : Layer<TDevice>  (layerChild, precedingLayer.parallelSequences(), precedingLayer.maxSeqLength(), createOutputs)
         , m_precedingLayer(precedingLayer)
     {
-        if (this->size() != requiredSize)
+	// Modify 0506. For MDN, requireSize = -1, no need to check here
+	// if (this->size() != requiredSize)
+        if (requiredSize > 0 && this->size() != requiredSize)
             throw std::runtime_error("Size mismatch: " + boost::lexical_cast<std::string>(this->size()) + " vs. " + boost::lexical_cast<std::string>(requiredSize));
 	
 	/* Add 0401 wang */
@@ -138,6 +140,18 @@ namespace layers {
 	return true;
     }
     
+    template <typename TDevice>
+    void PostOutputLayer<TDevice>::reInitWeight()
+    {
+	// nothing to be done here
+    }
+    
+    template <typename TDevice>
+    Layer<TDevice>& PostOutputLayer<TDevice>::precedingLayer()
+    {
+        return m_precedingLayer;
+    }    
+
     // explicit template instantiations
     template class PostOutputLayer<Cpu>;
     template class PostOutputLayer<Gpu>;

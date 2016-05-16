@@ -26,6 +26,7 @@
 #include "layers/InputLayer.hpp"
 #include "layers/TrainableLayer.hpp"
 #include "layers/PostOutputLayer.hpp"
+#include "layers/MDNLayer.hpp"
 #include "layers/SkipParaLayer.hpp"
 #include "data_sets/DataSet.hpp"
 #include "helpers/JsonClassesForward.hpp"
@@ -90,10 +91,12 @@ public:
      */
     /* Modify 04-08 Wang: to tap in the output of arbitary layer */
     //layers::TrainableLayer<TDevice>& outputLayer();
-    layers::TrainableLayer<TDevice>& outputLayer(const int layerID=-1);
+    layers::Layer<TDevice>& outputLayer(const int layerID=-1);
 
     layers::SkipLayer<TDevice>* outGateLayer(const int layerID);
     
+    layers::MDNLayer<TDevice>* outMDNLayer();
+
     /**
      * Returns the post output layer
      *
@@ -151,7 +154,9 @@ public:
      *
      * @return Outputs of the processed fraction
      */
-    std::vector<std::vector<std::vector<real_t> > > getOutputs(const int layerID =-1, const bool gateFromOutput=false);
+    std::vector<std::vector<std::vector<real_t> > > getOutputs(const int  layerID =-1, 
+							       const bool gateFromOutput=false,
+							       const real_t  mdnoutput=-1.0);
 
     /* Add 16-02-22 Wang: for WE updating */
     // repare for we updateing
@@ -166,7 +171,16 @@ public:
 
     /* Add 0413 Wang: for weight mask */
     bool initWeightMask(const std::string weightMaskPath);
+
     void maskWeight();
+    
+    /* Add 0511 Wang: re-initialize the weight*/
+    void reInitWeight();
+
+
+    /* Add 0514 Wang: initialize the output layer for MDN */
+    void initOutputForMDN(const data_sets::DataSetMV &datamv);
+
 };
 
 

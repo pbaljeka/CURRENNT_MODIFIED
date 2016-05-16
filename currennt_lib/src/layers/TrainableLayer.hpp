@@ -52,7 +52,9 @@ namespace layers {
 	
 	// Add 04-13 for weight Mask
 	real_vector m_weightMask;  // the float data to store weight mask
-	int m_weightNum;     // the number of weights
+	bool m_weightMaskFlag;     // whether to use the weight Mask
+	int m_weightNum;           // the number of weights
+
     protected:
         real_vector& _weightUpdates();
 
@@ -143,6 +145,7 @@ namespace layers {
 	
 	/* Read in the weight mask */
 	void readWeightMask(std::vector<real_t>::iterator b, std::vector<real_t>::iterator e);
+	const bool& flagUseWeightMask() const;
 	virtual void maskWeight();
 	
 	
@@ -167,6 +170,13 @@ namespace layers {
          * @see Layer::exportLayer()
          */
         virtual void exportLayer(const helpers::JsonValue &layersArray, const helpers::JsonAllocator &allocator) const;
+
+	/**
+	 * Re-initialize the network
+	   only defines for Trainable Layers
+	 */
+	virtual void reInitWeight();
+	
     };
 
 } // namespace layers

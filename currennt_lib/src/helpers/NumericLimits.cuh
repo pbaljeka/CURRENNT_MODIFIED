@@ -41,6 +41,11 @@ namespace helpers {
         RETURN_VALUE_FN(expLimit, 88.722839f);
         RETURN_VALUE_FN(logInf,   1e30f);
         RETURN_VALUE_FN(logZero,  -1e30f);
+	// Add numeric support (borrowed from HTS)
+	RETURN_VALUE_FN(lSMALL,   -0.5e10f);
+	RETURN_VALUE_FN(minLarg,  1.1754944e-038f); // = exp(-87.3365)
+	RETURN_VALUE_FN(minEarg,  -87.3365); //  = log(1.1754944e-038)
+	RETURN_VALUE_FN(minLogExp,-69.0776); //  = -log(-logZero)
     };
 
     template <>
@@ -53,6 +58,11 @@ namespace helpers {
         RETURN_VALUE_FN(expLimit, 709.78271289338397);
         RETURN_VALUE_FN(logInf,   1e100);
         RETURN_VALUE_FN(logZero,  -1e100);
+	// NOTE: not changed for double
+	RETURN_VALUE_FN(lSMALL,   -0.5e10f);
+	RETURN_VALUE_FN(minLarg,  1.1754944e-038f); // = exp(-87.3365)
+	RETURN_VALUE_FN(minEarg,  -87.3365); //  = log(1.1754944e-038)
+	RETURN_VALUE_FN(minLogExp,-69.0776); //  = -log(-logZero)
     };
 
 } // namespace helpers

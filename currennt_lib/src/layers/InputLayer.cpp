@@ -212,6 +212,12 @@ namespace layers {
 	return true;
     }
 
+    template <typename TDevice>
+    void InputLayer<TDevice>::reInitWeight()
+    {
+	// nothing to be done here
+    }
+
     // explicit template instantiations
     template class InputLayer<Cpu>;
     template class InputLayer<Gpu>;

@@ -106,7 +106,12 @@ namespace optimizers {
 
 
         virtual void importParameter(const helpers::JsonDocument &jsonDoc);
-
+	
+	// 0511 Wang: adjust the learning rate
+	virtual void adjustLR(int decayTime);
+	
+	virtual void reinit();
+	
         /**
          * Sets the learning rate for the first layer.
          */

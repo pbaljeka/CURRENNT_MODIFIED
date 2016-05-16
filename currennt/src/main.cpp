@@ -139,7 +139,9 @@ int trainerMain(const Configuration &config)
         // calculate the maximum sequence length
         int maxSeqLength;
         if (config.trainingMode())
-            maxSeqLength = std::max(trainingSet->maxSeqLength(), std::max(validationSet->maxSeqLength(), testSet->maxSeqLength()));
+            maxSeqLength = std::max(trainingSet->maxSeqLength(), 
+				    std::max(validationSet->maxSeqLength(), 
+					     testSet->maxSeqLength()));
         else
             maxSeqLength = feedForwardSet->maxSeqLength();
 
@@ -158,7 +160,8 @@ int trainerMain(const Configuration &config)
         outputSize = trainingSet->outputPatternSize();
 
 	/* Add 16-02-22 Wang: for WE updating */
-	// NeuralNetwork<TDevice> neuralNetwork(netDoc, parallelSequences, maxSeqLength, inputSize, outputSize);	
+	// NeuralNetwork<TDevice> neuralNetwork(netDoc, parallelSequences, 
+	//    maxSeqLength, inputSize, outputSize);	
 	if (config.weUpdate() && config.trainingMode()){
 	    // change input size when external WE is used
 	    // this inputSize will be checked against parameter set in neuralNetwork()
@@ -173,12 +176,26 @@ int trainerMain(const Configuration &config)
 	    netDocPtr = &netDoc;
 	}
         
-	NeuralNetwork<TDevice> neuralNetwork(*netDocPtr, parallelSequences, maxSeqLength, inputSize, outputSize);
+	NeuralNetwork<TDevice> neuralNetwork(*netDocPtr, parallelSequences, 
+					     maxSeqLength, inputSize, outputSize);
+
+        if (!trainingSet->empty() && trainingSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
+            throw std::runtime_error("Post output layer size != target pattern size of the training set");
+        if (!validationSet->empty() && validationSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
+            throw std::runtime_error("Post output layer size != target pattern size of the validation set");
+        if (!testSet->empty() && testSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
+            throw std::runtime_error("Post output layer size != target pattern size of the test set");
+
+	printf("done.\n");
+        printf("Layers:\n");
+        printLayers(neuralNetwork);
+        printf("\n");
 
 	/* Add 16-02-22 Wang: for WE updating */
 	if (config.weUpdate()){
 	    // Call the method and ask neuralNetwork to load the input
-	    neuralNetwork.initWeUpdate(config.weBankPath(), config.weDim(), config.weIDDim(), maxSeqLength*parallelSequences);
+	    neuralNetwork.initWeUpdate(config.weBankPath(), config.weDim(), 
+				       config.weIDDim(), maxSeqLength*parallelSequences);
 	}
 	
 	/* Add 16-04-01 Wang: for MSE weight */
@@ -191,25 +208,22 @@ int trainerMain(const Configuration &config)
 	    neuralNetwork.initWeightMask(config.weightMaskPath());
 	}
 	
-        if (!trainingSet->empty() && trainingSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
-            throw std::runtime_error("Post output layer size != target pattern size of the training set");
-        if (!validationSet->empty() && validationSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
-            throw std::runtime_error("Post output layer size != target pattern size of the validation set");
-        if (!testSet->empty() && testSet->outputPatternSize() != neuralNetwork.postOutputLayer().size())
-            throw std::runtime_error("Post output layer size != target pattern size of the test set");
-
-        printf("done.\n");
-        printf("Layers:\n");
-        printLayers(neuralNetwork);
-        printf("\n");
+	/* Add 0514 Wang: for reading the data mv and initialize for MDN */
+	boost::shared_ptr<data_sets::DataSetMV> dataMV=boost::make_shared<data_sets::DataSetMV>();
+	if (config.datamvPath().size()>0 && config.continueFile().empty())
+	    dataMV = boost::make_shared<data_sets::DataSetMV>(config.datamvPath());
+	// always check and initialize for MDN 
+	if (config.trainingMode() && config.continueFile().empty())
+	    neuralNetwork.initOutputForMDN(*dataMV);
 
         // check if this is a classification task
         bool classificationTask = false;
-        if (dynamic_cast<layers::BinaryClassificationLayer<TDevice>*>(&neuralNetwork.postOutputLayer())
-            || dynamic_cast<layers::MulticlassClassificationLayer<TDevice>*>(&neuralNetwork.postOutputLayer())) {
+        if (dynamic_cast<layers::BinaryClassificationLayer<TDevice>*>(
+					&neuralNetwork.postOutputLayer())
+            || dynamic_cast<layers::MulticlassClassificationLayer<TDevice>*>(
+					&neuralNetwork.postOutputLayer())) {
                 classificationTask = true;
         }
-
         printf("\n");
 
         // create the optimizer
@@ -223,7 +237,8 @@ int trainerMain(const Configuration &config)
             case Configuration::OPTIMIZER_STEEPESTDESCENT:
                 sdo = new optimizers::SteepestDescentOptimizer<TDevice>(
                     neuralNetwork, *trainingSet, *validationSet, *testSet,
-                    config.maxEpochs(), config.maxEpochsNoBest(), config.validateEvery(), config.testEvery(),
+                    config.maxEpochs(), config.maxEpochsNoBest(), 
+		    config.validateEvery(), config.testEvery(),
                     config.learningRate(), config.momentum(), config.weLearningRate(),
 		    config.lrDecayRate(), config.lrDecayEpoch()
                     );
@@ -250,51 +265,85 @@ int trainerMain(const Configuration &config)
 	    
 
             // train the network
-            printf("Starting training...\n");
+            printf("Starting training...\nPrint error per sequence / per timestep");
             printf("\n");
-
-            printf(" Epoch | Duration |  Training error  | Validation error |    Test error    | New best \n");
-            printf("-------+----------+------------------+------------------+------------------+----------\n");
-            std::cout << infoRows;
-
+	    printf(" Epoch | Duration |           Training error  |");
+	    printf("           Validation error|");
+	    printf("           Test error      |");
+	    printf("New best \n");
+            printf("-------+----------+---------------------------+");
+	    printf("---------------------------+");
+	    printf("---------------------------+");
+	    printf("---------\n");
+	    std::cout << infoRows;
+	    
+	    int blowedTime = 0;
             bool finished = false;
             while (!finished) {
-                const char *errFormat = (classificationTask ? "%6.2lf%%%10.3lf |" : "%17.3lf |");
-                const char *errSpace  = "                  |";
+                const char *errFormat = (classificationTask ? "%6.2lf%%%10.3lf |" : "%14.3lf /%10.3lf |");
+                const char *errSpace  = "                           |";
 
                 // train for one epoch and measure the time
                 infoRows += printfRow(" %5d | ", optimizer->currentEpoch() + 1);
                 
                 boost::posix_time::ptime startTime = boost::posix_time::microsec_clock::local_time();
                 finished = optimizer->train();
+
+		// Add 0511: if optimizer is blowed, decrease the learning_rate and start again
+		if (optimizer->blowed()){
+		    optimizer->reinit();
+		    optimizer->adjustLR(1);
+		    neuralNetwork.reInitWeight();
+		    neuralNetwork.initOutputForMDN(*dataMV);
+		    if (++blowedTime > 10){
+			printf("Something wrong with the network\n");
+			finished = true;
+		    }
+		    continue;
+		}
+		
                 boost::posix_time::ptime endTime = boost::posix_time::microsec_clock::local_time();
                 double duration = (double)(endTime - startTime).total_milliseconds() / 1000.0;
 
                 infoRows += printfRow("%8.1lf |", duration);
                 if (classificationTask)
-                    infoRows += printfRow(errFormat, (double)optimizer->curTrainingClassError()*100.0, (double)optimizer->curTrainingError());
+                    infoRows += printfRow(errFormat, 
+					  (double)optimizer->curTrainingClassError()*100.0, 
+					  (double)optimizer->curTrainingError());
                 else
-                    infoRows += printfRow(errFormat, (double)optimizer->curTrainingError());
+                    infoRows += printfRow(errFormat, 
+					  (double)optimizer->curTrainingError(),
+					  (double)optimizer->curTrainingErrorPerFrame());
                 
-                if (!validationSet->empty() && optimizer->currentEpoch() % config.validateEvery() == 0) {
+                if (!validationSet->empty() && 
+		    optimizer->currentEpoch() % config.validateEvery() == 0) {
                     if (classificationTask)
-                        infoRows += printfRow(errFormat, (double)optimizer->curValidationClassError()*100.0, (double)optimizer->curValidationError());
+                        infoRows += printfRow(errFormat, 
+					      (double)optimizer->curValidationClassError()*100.0, 
+					      (double)optimizer->curValidationError());
                     else
-                        infoRows += printfRow(errFormat, (double)optimizer->curValidationError());
+                        infoRows += printfRow(errFormat, 
+					      (double)optimizer->curValidationError(),
+					      (double)optimizer->curValidationErrorPerFrame());
                 }
                 else
                     infoRows += printfRow("%s", errSpace);
 
                 if (!testSet->empty() && optimizer->currentEpoch() % config.testEvery() == 0) {
                     if (classificationTask)
-                        infoRows += printfRow(errFormat, (double)optimizer->curTestClassError()*100.0, (double)optimizer->curTestError());
+                        infoRows += printfRow(errFormat, 
+					      (double)optimizer->curTestClassError()*100.0, 
+					      (double)optimizer->curTestError());
                     else
-                        infoRows += printfRow(errFormat, (double)optimizer->curTestError());
+                        infoRows += printfRow(errFormat, 
+					      (double)optimizer->curTestError(),
+					      (double)optimizer->curTestErrorPerFrame());
                 }
                 else
                     infoRows += printfRow("%s", errSpace);
 
-                if (!validationSet->empty() && optimizer->currentEpoch() % config.validateEvery() == 0) {
+                if (!validationSet->empty() && 
+		    optimizer->currentEpoch() % config.validateEvery() == 0) {
                     if (optimizer->epochsSinceLowestValidationError() == 0) {
                         infoRows += printfRow("  yes   \n");
                         if (config.autosaveBest()) {
@@ -309,7 +358,10 @@ int trainerMain(const Configuration &config)
                             else
                                 saveFileS << config.autosavePrefix();
                             saveFileS << ".best.jsn";
-                            saveNetwork(neuralNetwork, saveFileS.str(), config.learningRate(), config.weLearningRate());
+                            saveNetwork(neuralNetwork, 
+					saveFileS.str(), 
+					config.learningRate(), 
+					config.weLearningRate());
                         }
                     }
                     else{
@@ -324,13 +376,15 @@ int trainerMain(const Configuration &config)
 
                 // autosave
                 if (config.autosave())
-                    saveState(neuralNetwork, *optimizer, infoRows, config.learningRate(), config.weLearningRate());
+                    saveState(neuralNetwork, *optimizer, infoRows, 
+			      config.learningRate(), config.weLearningRate());
             }
 
             printf("\n");
 
             if (optimizer->epochsSinceLowestValidationError() == config.maxEpochsNoBest())
-                printf("No new lowest error since %d epochs. Training stopped.\n", config.maxEpochsNoBest());
+                printf("No new lowest error since %d epochs. Training stopped.\n", 
+		       config.maxEpochsNoBest());
             else
                 printf("Maximum number of training epochs reached. Training stopped.\n");
 
@@ -342,7 +396,8 @@ int trainerMain(const Configuration &config)
 
             // save the trained network to the output file
             printf("Storing the trained network in '%s'... ", config.trainedNetworkFile().c_str());
-            saveNetwork(neuralNetwork, config.trainedNetworkFile(), config.learningRate(), config.weLearningRate());
+            saveNetwork(neuralNetwork, config.trainedNetworkFile(), 
+			config.learningRate(), config.weLearningRate());
             printf("done.\n");
 
             std::cout << "Removing cache file(s) ..." << std::endl;
@@ -363,8 +418,9 @@ int trainerMain(const Configuration &config)
              //   printf("outputMeans[%d] = %f outputStdevs[%d] = %f\n", i, outputMeans[i], i, outputStdevs[i]);
             bool unstandardize = config.revertStd(); 
 	    /* Modify 04-08, if output layer is not the last output, no standardize is required */
-            if (unstandardize && config.outputFromWhichLayer()<0) {
-                printf("Outputs will be scaled by mean and standard deviation specified in NC file.\n");
+	    if (unstandardize && config.outputFromWhichLayer()<0 && 
+		(config.mdnPara() < -1.0 || config.mdnPara() > 0.0)){
+                printf("Outputs will be scaled by mean and std  specified in NC file.\n");
             }
 
             int output_lag = config.outputTimeLag();
@@ -470,6 +526,8 @@ int trainerMain(const Configuration &config)
                 boost::shared_ptr<data_sets::DataSetFraction> frac;
 		if (config.outputFromGateLayer()){
 		    printf("Computing outputs from layer %d gate output\n", config.outputFromWhichLayer());
+		}else if(config.mdnPara()>0){
+		    printf("Computing outputs from MDN with para=%f\n",config.mdnPara());
 		}else
 		    printf("Computing outputs from layer %d \n", config.outputFromWhichLayer());
 		
@@ -481,7 +539,10 @@ int trainerMain(const Configuration &config)
                     // compute the forward pass for the current data fraction and extract the outputs
                     neuralNetwork.loadSequences(*frac);
                     neuralNetwork.computeForwardPass();
-                    std::vector<std::vector<std::vector<real_t> > > outputs = neuralNetwork.getOutputs(config.outputFromWhichLayer(), config.outputFromGateLayer());
+                    std::vector<std::vector<std::vector<real_t> > > outputs = neuralNetwork.getOutputs(
+				config.outputFromWhichLayer(), 
+				config.outputFromGateLayer(),
+				config.mdnPara());
 
                     // write one output file per sequence
                     for (int psIdx = 0; psIdx < (int)outputs.size(); ++psIdx) {
@@ -534,7 +595,8 @@ int trainerMain(const Configuration &config)
                                         v = (float)outputs[psIdx][timestep + output_lag][outputIdx];
                                     else
                                         v = (float)outputs[psIdx][outputs[psIdx].size() - 1][outputIdx];
-                                    if (unstandardize && config.outputFromWhichLayer()<0) {
+                                    if (unstandardize && config.outputFromWhichLayer()<0 && 
+					(config.mdnPara() < -1.0 || config.mdnPara() > 0.0)) {
                                         v *= outputStdevs[outputIdx];
                                         v += outputMeans[outputIdx];
                                     }

@@ -120,8 +120,10 @@ namespace layers {
                 for (size_t i = 0; i < weights.size(); ++i)
                     weights[i] = dist(*gen) + config.weightsDistributionUniformMin();
             }else if (config.weightsDistributionType() == Configuration::DISTRIBUTION_UNINORMALIZED){
-		// Add 02-29 Wang, for uniform distribution with normalzied min-max , Xavier Glorot, Understanding the dif ... 2010
-		// Here, we only make a approximation by assuming n_i+1 = n_i, x~[-sqrt(3)/sqrt(n), sqrt(3)/sqrt(n)]
+		// Add 02-29 Wang, for uniform distribution with normalzied min-max , 
+		// Xavier Glorot, Understanding the dif ... 2010
+		// Here, we only make a approximation by assuming 
+		//    n_i+1 = n_i, x~[-sqrt(3)/sqrt(n), sqrt(3)/sqrt(n)]
 		real_t range = 2*std::sqrt(3.0/(real_t)this->size());
                 boost::random::uniform_real_distribution<real_t> dist(0, range);
                 for (size_t i = 0; i < weights.size(); ++i)
@@ -143,7 +145,7 @@ namespace layers {
 	    weights[i] = 1.0;
 	m_weightMask    = weights;          // make it the same length as weights matrix (for efficiency)
 	m_weightNum     = weights.size(); 
-
+	m_weightMaskFlag= false;
         // resize the output errors vector
         //m_outputErrors = Cpu::real_vector(this->_outputs().size(), (real_t)0);
     }
@@ -234,7 +236,17 @@ namespace layers {
 	    
 	// copy the mask data into m_weightMask
 	m_weightMask = tempVec;
+	
+	// set the flag
+	m_weightMaskFlag = true;
     }
+    
+    template <typename TDevice>
+    const bool& TrainableLayer<TDevice>::flagUseWeightMask() const
+    {
+	return m_weightMaskFlag;
+    }
+
     template <typename TDevice>
     void TrainableLayer<TDevice>::maskWeight()
     {
@@ -310,8 +322,47 @@ namespace layers {
         Layer<TDevice>::exportLayer(layersArray, allocator);
         (*layersArray)[layersArray->Size() - 1].AddMember("bias", m_bias, allocator);
     }
+    
+    // Add 0511: re-initialize the weight (used for learning_rate checking)
+    template <typename TDevice>
+    void TrainableLayer<TDevice>::reInitWeight()
+    {
+	// copied from the initializer of TrainableLayer
+	
+	Cpu::real_vector weights;
+	weights.resize(this->size() * (m_inputWeightsPerBlock * (m_precedingLayer.size() + 1) + m_internalWeightsPerBlock));
+	const Configuration &config = Configuration::instance();
+	static boost::mt19937 *gen = NULL;
+	if (!gen) {
+	    gen = new boost::mt19937;
+	    gen->seed(config.randomSeed());
+	}
+        if (config.weightsDistributionType() == Configuration::DISTRIBUTION_UNIFORM) {
+	    real_t range = config.weightsDistributionUniformMax() - config.weightsDistributionUniformMin();
+	    boost::random::uniform_real_distribution<real_t> dist(0, range);
+	    for (size_t i = 0; i < weights.size(); ++i)
+		weights[i] = dist(*gen) + config.weightsDistributionUniformMin();
+	}else if (config.weightsDistributionType() == Configuration::DISTRIBUTION_UNINORMALIZED){
+	    // Add 02-29 Wang, for uniform distribution with normalzied min-max , 
+	    // Xavier Glorot, Understanding the dif ... 2010
+	    // Here, we only make a approximation by assuming 
+	    //    n_i+1 = n_i, x~[-sqrt(3)/sqrt(n), sqrt(3)/sqrt(n)]
+	    real_t range = 2*std::sqrt(3.0/(real_t)this->size());
+	    boost::random::uniform_real_distribution<real_t> dist(0, range);
+	    for (size_t i = 0; i < weights.size(); ++i)
+		weights[i] = dist(*gen) - range/2.0;
+	    
+	}
+	else {
+	    boost::random::normal_distribution<real_t> dist(config.weightsDistributionNormalMean(), config.weightsDistributionNormalSigma());
+	    for (size_t i = 0; i < weights.size(); ++i)
+		weights[i] = dist(*gen);
+	}
+	m_weights       = weights;
+        m_weightUpdates = weights;
 
-
+    }
+    
     // explicit template instantiations
     template class TrainableLayer<Cpu>;
     template class TrainableLayer<Gpu>;

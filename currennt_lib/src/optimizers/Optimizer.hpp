@@ -51,6 +51,8 @@ namespace optimizers {
         const int m_testEvery;
 
         bool   m_finished;
+	// 0511 wang: check Nan and other;
+	bool       m_blowed;
         int	   m_curEpoch;
         int	   m_epochsSinceLowestError;
         real_t m_lowestValidationError;
@@ -60,11 +62,16 @@ namespace optimizers {
         real_t m_curValidationClassError;
         real_t m_curTrainingClassError;
         real_t m_curTestClassError;
+	
+	// Add 0512 showing the Error per frame
+	real_t m_curTrainingErrorPerFrame;
+        real_t m_curValidationErrorPerFrame;
+        real_t m_curTestErrorPerFrame;
 
 	// Add 0409 for learning_rate decay
-	bool m_flag_decay;   // whether the learning rate should be decayed
-	const int m_decayEpochNM; // after how many sub-optimal epochs for decaying
-	int m_waitAfterDecay;// how many epochs to wait before decay again
+	bool m_flag_decay;         // whether the learning rate should be decayed
+	const int m_decayEpochNM;  // after how many sub-optimal epochs for decaying
+	int m_waitAfterDecay;      // how many epochs to wait before decay again
 
         std::vector<real_vector> m_curWeightUpdates;
         std::vector<real_vector> m_bestWeights;
@@ -199,13 +206,23 @@ namespace optimizers {
          * @return True if the training is finished
          */
         bool train();
+	
 
+	// add 05-11 
+	bool blowed();
         /**
          * Writes the current state to a JSON tree
          *
          * @param jsonDoc The JSON document
          */
         virtual void exportState(const helpers::JsonDocument &jsonDoc) const;
+	
+	virtual void adjustLR(int decayTime) =0;
+	
+	virtual void reinit() =0;
+	
+	void _reinit();
+	
 
         /**
          * Restores the state from a JSON tree
@@ -215,6 +232,16 @@ namespace optimizers {
         virtual void importState(const helpers::JsonDocument &jsonDoc);
 
 	virtual void importParameter(const helpers::JsonDocument &jsonDoc);
+
+	/**
+	 * Show the error per frame
+	 */
+        real_t curTrainingErrorPerFrame() const;
+
+        real_t curValidationErrorPerFrame() const;
+
+        real_t curTestErrorPerFrame() const;
+	
     };
 
 } // namespace optimizers

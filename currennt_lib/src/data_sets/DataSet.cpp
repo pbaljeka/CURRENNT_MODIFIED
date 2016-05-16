@@ -123,8 +123,10 @@ namespace internal {
         size_t count[] = {n};
 
         thrust::host_vector<T> v(n);
-        if ((ret = nc_inq_varid(ncid, arrName, &varid)) || (ret = _readNcArrayHelper<T>(ncid, varid, start, count, v.data())))
-            throw std::runtime_error(std::string("Cannot read array '") + arrName + "': " + nc_strerror(ret));
+        if ((ret = nc_inq_varid(ncid, arrName, &varid)) || 
+	    (ret = _readNcArrayHelper<T>(ncid, varid, start, count, v.data())))
+            throw std::runtime_error(std::string("Cannot read array '") + 
+				     arrName + "': " + nc_strerror(ret));
 
         return v;
     }
@@ -459,16 +461,20 @@ namespace data_sets {
         // open the cache file
         std::string tmpFileName = "";
         if (cachePath == "") {
-            tmpFileName = (boost::filesystem::temp_directory_path() / boost::filesystem::unique_path()).string();
+            tmpFileName = (boost::filesystem::temp_directory_path() / 
+			   boost::filesystem::unique_path()).string();
         }
         else {
             tmpFileName = cachePath + "/" + (boost::filesystem::unique_path()).string();
         }
         std::cerr << std::endl << "using cache file: " << tmpFileName << std::endl << "... ";
         m_cacheFileName = tmpFileName;
-        m_cacheFile.open(tmpFileName.c_str(), std::fstream::in | std::fstream::out | std::fstream::binary | std::fstream::trunc);
+        m_cacheFile.open(tmpFileName.c_str(), 
+			 std::fstream::in | std::fstream::out | 
+			 std::fstream::binary | std::fstream::trunc);
         if (!m_cacheFile.good())
-            throw std::runtime_error(std::string("Cannot open temporary file '") + tmpFileName + "'");
+            throw std::runtime_error(std::string("Cannot open temporary file '") + 
+				     tmpFileName + "'");
 
         bool first_file = true;
 
@@ -479,7 +485,8 @@ namespace data_sets {
             std::vector<sequence_t> sequences;
 
             if ((ret = nc_open(nc_itr->c_str(), NC_NOWRITE, &ncid)))
-                throw std::runtime_error(std::string("Could not open '") + *nc_itr + "': " + nc_strerror(ret));
+                throw std::runtime_error(std::string("Could not open '") + 
+					 *nc_itr + "': " + nc_strerror(ret));
 
             // extract the patterns from the *.nc file
             try {
@@ -499,7 +506,7 @@ namespace data_sets {
                 else {
                     if (m_isClassificationData) {
                         if (!internal::hasNcDimension(ncid, "numLabels")) 
-                            throw std::runtime_error("Cannot combine classification with regression NC");
+                            throw std::runtime_error("Cannot do classification with regression NC");
                         int numLabels = internal::readNcDimension(ncid, "numLabels");
                         if (m_outputPatternSize != (numLabels == 2 ? 1 : numLabels))
                             throw std::runtime_error("Number of classes mismatch in NC files");
@@ -522,7 +529,8 @@ namespace data_sets {
                     int seqLength = internal::readNcIntArray(ncid, "seqLengths", i);
                     m_totalTimesteps += seqLength;
 
-                    std::string seqTag = internal::readNcStringArray(ncid, "seqTags", i, maxSeqTagLength);
+                    std::string seqTag = internal::readNcStringArray(ncid, "seqTags", i, 
+								     maxSeqTagLength);
                     int k = 0;
                     while (seqLength > 0) {
                         sequence_t seq;
@@ -535,34 +543,42 @@ namespace data_sets {
                             seq.length = seqLength;
                         // TODO append index k
                         seq.seqTag         = seqTag; 
-                        //std::cout << "sequence #" << nSeq << ": " << seq.length << " steps" << std::endl;
+                        
                         sequences.push_back(seq);
                         seqLength -= seq.length;
                         ++k;
                     }
                 }
 
-                for (std::vector<sequence_t>::iterator seq = sequences.begin(); seq != sequences.end(); ++seq) {
+                for (std::vector<sequence_t>::iterator seq = sequences.begin(); 
+		     seq != sequences.end(); 
+		     ++seq) {
                     m_minSeqLength = std::min(m_minSeqLength, seq->length);
                     m_maxSeqLength = std::max(m_maxSeqLength, seq->length);
 
                     // read input patterns and store them in the cache file
                     seq->inputsBegin = m_cacheFile.tellp();
-                    Cpu::real_vector inputs = internal::readNcPatternArray(ncid, "inputs", inputsBegin, seq->length, m_inputPatternSize);
+                    Cpu::real_vector inputs = internal::readNcPatternArray(
+			    ncid, "inputs", inputsBegin, seq->length, m_inputPatternSize);
                     m_cacheFile.write((const char*)inputs.data(), sizeof(real_t) * inputs.size());
-                    assert (m_cacheFile.tellp() - seq->inputsBegin == seq->length * m_inputPatternSize * sizeof(real_t));
+                    assert (m_cacheFile.tellp() - seq->inputsBegin == 
+			    seq->length * m_inputPatternSize * sizeof(real_t));
 
                     // read targets and store them in the cache file
                     seq->targetsBegin = m_cacheFile.tellp();
                     if (m_isClassificationData) {
-                        Cpu::int_vector targets = internal::readNcArray<int>(ncid, "targetClasses", targetsBegin, seq->length);
+                        Cpu::int_vector targets = internal::readNcArray<int>(
+                            ncid, "targetClasses", targetsBegin, seq->length);
                         m_cacheFile.write((const char*)targets.data(), sizeof(int) * targets.size());
-                        assert (m_cacheFile.tellp() - seq->targetsBegin == seq->length * sizeof(int));
+                        assert (m_cacheFile.tellp()-seq->targetsBegin == seq->length * sizeof(int));
                     }
                     else {
-                        Cpu::real_vector targets = internal::readNcPatternArray(ncid, "targetPatterns", targetsBegin, seq->length, m_outputPatternSize);
-                        m_cacheFile.write((const char*)targets.data(), sizeof(real_t) * targets.size());
-                        assert (m_cacheFile.tellp() - seq->targetsBegin == seq->length * m_outputPatternSize * sizeof(real_t));
+                        Cpu::real_vector targets = internal::readNcPatternArray(
+                            ncid, "targetPatterns", targetsBegin, seq->length, m_outputPatternSize);
+                        m_cacheFile.write((const char*)targets.data(), 
+					  sizeof(real_t) * targets.size());
+                        assert (m_cacheFile.tellp() - seq->targetsBegin == 
+				seq->length * m_outputPatternSize * sizeof(real_t));
                     }
 
                     inputsBegin  += seq->length;
@@ -572,8 +588,10 @@ namespace data_sets {
                 if (first_file) {
                     // retrieve output means + standard deviations, if they exist
                     try {
-                        m_outputMeans  = internal::readNcArray<real_t>(ncid, "outputMeans",  0, m_outputPatternSize);
-                        m_outputStdevs = internal::readNcArray<real_t>(ncid, "outputStdevs", 0, m_outputPatternSize);
+                        m_outputMeans  = internal::readNcArray<real_t>(
+						   ncid, "outputMeans",  0, m_outputPatternSize);
+                        m_outputStdevs = internal::readNcArray<real_t>(
+                                                   ncid, "outputStdevs", 0, m_outputPatternSize);
                     }
                     catch (std::runtime_error& err) {
                         // Will result in "do nothing" when output unstandardization is used ...
@@ -711,5 +729,95 @@ namespace data_sets {
     {
         return m_cacheFileName;
     }
+
+    
+    // Add 0514 Wang: methods of DataSetMV
+    /*
+    	const int inputSize() const;
+	const int outputSize() const;
+	Cpu::real_vector& inputM();
+	Cpu::real_vector& inputV();
+	Cpu::real_vector& outputM();
+	Cpu::real_vector& outputV();
+
+	int    m_inputPatternSize;
+        int    m_outputPatternSize;
+
+        Cpu::real_vector m_inputMeans;
+        Cpu::real_vector m_inputStdevs;
+
+        Cpu::real_vector m_outputMeans;
+        Cpu::real_vector m_outputStdevs;
+	
+	DataSetMV(const std::string &ncfile);
+	~DataSetMV();
+    */
+    
+    DataSetMV::DataSetMV(const std::string &ncfile)
+	: m_inputPatternSize (-1)
+	, m_outputPatternSize(-1)
+    {
+	int ret;
+	int ncid;
+	
+	// read the mv data file
+	if ((ret = nc_open(ncfile.c_str(), NC_NOWRITE, &ncid)))
+	    throw std::runtime_error(std::string("Can't open mv file:")+ncfile);
+	
+	try{
+	    // read the dimension
+	    m_inputPatternSize  = internal::readNcDimension(ncid, "inputPattSize");
+	    m_outputPatternSize = internal::readNcDimension(ncid, "targetPattSize");
+	    
+	    // read the mean and variance
+	    m_inputMeans  = internal::readNcArray<real_t>(ncid,"inputMeans",  0, m_inputPatternSize);
+	    m_inputStdevs = internal::readNcArray<real_t>(ncid,"inputStdevs", 0, m_inputPatternSize);
+	    m_outputMeans = internal::readNcArray<real_t>(ncid,"outputMeans", 0, m_outputPatternSize);
+	    m_outputStdevs= internal::readNcArray<real_t>(ncid,"outputStdevs",0, m_outputPatternSize);
+	    
+	    
+	}catch (const std::exception&){
+	    nc_close(ncid);
+	    throw;
+	}
+	nc_close(ncid);
+    }
+    
+    DataSetMV::DataSetMV()
+	: m_inputPatternSize (-1)
+	, m_outputPatternSize(-1)
+    {
+    }
+    
+    DataSetMV::~DataSetMV()
+    {
+    }
+    
+    const int& DataSetMV::inputSize() const
+    {
+	return m_inputPatternSize;
+    }
+    const int& DataSetMV::outputSize() const
+    {
+	return m_outputPatternSize;
+    }
+
+    const Cpu::real_vector& DataSetMV::inputM() const
+    {
+	return m_inputMeans;
+    }
+    const Cpu::real_vector& DataSetMV::inputV() const 
+    {
+	return m_inputStdevs;
+    }
+    const Cpu::real_vector& DataSetMV::outputM() const
+    {
+	return m_outputMeans;
+    }
+    const Cpu::real_vector& DataSetMV::outputV() const
+    {
+	return m_outputStdevs;
+    }
+    
 
 } // namespace data_sets

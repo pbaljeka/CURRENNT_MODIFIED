@@ -89,6 +89,12 @@ namespace layers {
          * @see Layer::computeBackwardPass()
          */
         virtual void computeBackwardPass();
+
+	/**
+	 * Re-initialize the network
+	   only defines for Trainable Layers, here do nothing
+	 */
+	virtual void reInitWeight();
     };
 
 } // namespace layers

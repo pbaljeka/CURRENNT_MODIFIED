@@ -96,6 +96,13 @@ private:
     /* Add 0413 Wang: to mask the weight of network */
     std::string m_weightMaskPath;
     
+    /* Add 0504 Wang: MDN flag vector */
+    std::string m_mdnFlagPath;
+    real_t m_mdnSamplingPara;
+
+    /* Add 0514 Wang: data mv file*/
+    std::string m_datamvPath;
+    
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
     unsigned m_maxEpochs;
@@ -492,13 +499,17 @@ public:
     const std::string& mseWeightPath() const;
     const std::string& weightMaskPath() const;
     const std::string& trainedParameterPath() const;
+    const std::string& mdnFlagPath() const;
+    const std::string& datamvPath() const;
+
+    bool mdnFlag() const;
     const unsigned& weIDDim() const;
     
     const unsigned& weDim() const;
     
     real_t weLearningRate() const;
     const real_t& highwayGateBias() const;
-
+    const real_t& mdnPara() const;
     
     const int& outputFromWhichLayer() const;
     const bool& outputFromGateLayer() const;
