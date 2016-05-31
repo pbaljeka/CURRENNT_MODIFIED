@@ -347,32 +347,35 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
     int tempLayerId;
     unsigned char genMethod;
 
-    enum genMethod {ERROR = 0, GATEOUTPUT, MDNSAMPLING, MDNPARAMETER, NORMAL};
+    enum genMethod {ERROR = 0, GATEOUTPUT, MDNSAMPLING, MDNPARAMETER, MDNEMGEN, NORMAL};
     
     /* specify old, olm, tempLayerId
-       -2.0 is chosen for convience.
-       < -2.0: no MDN generation
+       -3.0 is chosen for convience.
+       
+       < -3.0: no MDN generation
+       > -3.0 && < -2.0: generating EM-style
        > -2.0 && < 0: generate MDN parameters (mdnoutput = -1.0)
        >0 : generate samples from MDN with the variance = variance * mdnoutput */
 
-    if (mdnoutput >= -2.0 && getGateOutput){
+    if (mdnoutput >= -3.0 && getGateOutput){
 	genMethod = ERROR;
 	throw std::runtime_error("MDN output and gate output can not be generated together");
-    }else if (mdnoutput < -2.0 && getGateOutput){
+    }else if (mdnoutput < -3.0 && getGateOutput){
 	olg = outGateLayer(layerID);
 	olm = NULL;
 	tempLayerId = layerID;
 	if (olg == NULL)
 	    throw std::runtime_error("Gate output tap ID invalid\n");
 	genMethod = GATEOUTPUT;
-    }else if (mdnoutput >= -2.0 && !getGateOutput){
+    }else if (mdnoutput >= -3.0 && !getGateOutput){
 	olg = NULL;
 	olm = outMDNLayer();
 	if (olm == NULL)
 	    throw std::runtime_error("No MDN layer in the current network");
 	olm->getOutput(mdnoutput); 
 	tempLayerId = m_layers.size()-1;
-	genMethod = (mdnoutput < 0.0) ? MDNPARAMETER:MDNSAMPLING;
+	genMethod = (mdnoutput < 0.0) ? ((mdnoutput < -1.5) ? MDNEMGEN:MDNPARAMETER):MDNSAMPLING;
+	
     }else{
 	olg = NULL;
 	olm = NULL;
@@ -390,6 +393,7 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
 	case PATTYPE_NORMAL:
 	case PATTYPE_LAST: {
 	    switch (genMethod){
+	    case MDNEMGEN:
 	    case MDNSAMPLING:
 	    case NORMAL:
 		{
@@ -561,7 +565,63 @@ void NeuralNetwork<TDevice>::initOutputForMDN(const data_sets::DataSetMV &datamv
 	}
     }
 }
+template <typename TDevice>
+void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc, 
+					   const std::string &ctrStr)
+{
+    try{
+	// Read in the control vector
+	Cpu::int_vector tempctrStr;
+	tempctrStr.resize(m_layers.size(), 1);
+	if (ctrStr.size() > 0 && ctrStr.size()!=m_layers.size()){
+	    throw std::runtime_error("Length of trainedParameterCtr unequal #layer.");
+	}else if (ctrStr.size()>0){
+	    for (int i=0; i<ctrStr.size(); i++)
+		if (ctrStr[i]=='0')
+		    tempctrStr[i] = 0;
+	}else{
+	    // nothing
+	}
+	
+	// Prepare the weight parameter
+	helpers::JsonValue weightsSection;
+        if (jsonDoc->HasMember("weights")) {
+            if (!(*jsonDoc)["weights"].IsObject())
+                throw std::runtime_error("Section 'weights' is not an object");
+            weightsSection = helpers::JsonValue(&(*jsonDoc)["weights"]);
+        }else{
+	    throw std::runtime_error("No weight section found");
+	}
 
+
+	printf("\tread parameter for layer (starts from 0): ");
+	// Read in the parameter
+	int cnt=0;
+	BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	    layers::TrainableLayer<TDevice>* Layer = dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	    if (Layer && tempctrStr[cnt] > 0){
+		printf("%d ", cnt);
+		Layer->reReadWeight(weightsSection);
+	    }
+	    cnt++;
+	}
+	printf("\tdone\n\n");
+    }catch (const std::exception &e){
+	throw std::runtime_error(std::string("Fail to read network weight")+e.what());
+    }
+}
+
+template <typename TDevice>
+Cpu::real_vector NeuralNetwork<TDevice>::getMdnConfigVec()
+{
+    Cpu::real_vector temp;
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layers::MDNLayer<TDevice>* mdnLayer = dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
+	if (mdnLayer)
+	    temp = mdnLayer->getMdnConfigVec();
+    }    
+    return temp;
+}
 
 // explicit template instantiations
 template class NeuralNetwork<Cpu>;

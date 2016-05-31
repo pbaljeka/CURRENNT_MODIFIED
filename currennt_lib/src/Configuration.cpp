@@ -167,7 +167,11 @@ Configuration::Configuration(int argc, const char *argv[])
 	
 	/* Add 0504 Wang: for MDN flag*/
 	("mdn_config",          po::value(&m_mdnFlagPath)    ->default_value(""),                      "path to the MDN flag. ")
-	("mdn_samplePara",      po::value(&m_mdnSamplingPara)->default_value((real_t)-3.0, "-3.0"),    "parameter for MDN sampling. mdn_samplePara > 0: sampling output from the distribution with the variance multiplied by mdn_samplePara. mdn_samplePara: -1.0, generate the parameter of the distribution. mdn_samplePara < -1.0: not use mdn and mdn generation.")
+	("mdn_samplePara",      po::value(&m_mdnSamplingPara)->default_value((real_t)-4.0, "-4.0"),    "parameter for MDN sampling. mdn_samplePara > 0: sampling output from the distribution with the variance multiplied by mdn_samplePara. mdn_samplePara: -1.0, generate the parameter of the distribution. mdn_samplePara < -1.0: not use mdn and mdn generation.")
+	("mdn_EMGenIter",       po::value(&m_EMGenIter)      ->default_value(5, "5"),                  "Number of iterations for EM generation in MDN (default 5). Iteration 1 is only initialization")
+	("varInitPara",         po::value(&m_varInitPara)    ->default_value(0.5, "0.5"), "Parameter to initialize the bias of MDN mixture unit (default 0.5)")
+	("vFloorPara",          po::value(&m_vFloorPara)     ->default_value(0.0001, "0.0001"), "Variance scale parameter for the variance floor (default 0.0001)")
+	("wInitPara",           po::value(&m_wInitPara)     ->default_value(1.0, "1.0"), "The weight of output layer before MDN will be initialized ~u(-para/layer*size, para/layer*size)")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -197,8 +201,9 @@ Configuration::Configuration(int argc, const char *argv[])
 	("weIDDim",           po::value(&m_weIDDim)    ->default_value(-1),       "the WE index is the ?-th dimension of the input vector? (-1)")
 	("weDim",             po::value(&m_weDim)      ->default_value(0),        "the dimension of the word embedding vectors (0)")
 	("weBank",            po::value(&m_weBank)     ->default_value(""),       "the path to the word vectors")
-	("trainedModel",      po::value(&m_trainedParameter) ->default_value(""), "the path to the trained model paratemeter")
-	("datamv",            po::value(&m_datamvPath)       ->default_value(""), "the path to the data mv file. This file can be read in and initialize MDN parameter (now not in use)")
+	("trainedModel",      po::value(&m_trainedParameter)    ->default_value(""), "the path to the trained model paratemeter")
+	("trainedModelCtr",   po::value(&m_trainedParameterCtr) ->default_value(""), "the trainedModel controller. A string of 0/1 whose length is #layer of NN. (default: void, read in all parameters)")
+	("datamv",            po::value(&m_datamvPath)          ->default_value(""), "the path to the data mv file. This file can be read in and initialize MDN parameter (now not in use)")
         ;
 
     po::options_description weightsInitializationOptions("Weight initialization options");
@@ -669,6 +674,11 @@ const std::string& Configuration::trainedParameterPath() const
 {
     return m_trainedParameter;
 }
+
+const std::string& Configuration::trainedParameterCtr() const
+{
+    return m_trainedParameterCtr;
+}
     
 const unsigned& Configuration::weIDDim() const
 {
@@ -738,3 +748,24 @@ const real_t& Configuration::mdnPara() const
 {
     return m_mdnSamplingPara;
 }
+
+const int& Configuration::EMIterNM() const
+{
+    return m_EMGenIter;
+}
+
+const real_t& Configuration::getVarInitPara() const
+{
+    return m_varInitPara;
+}
+
+const real_t& Configuration::getVFloorPara() const
+{
+    return m_vFloorPara;
+}
+
+const real_t& Configuration::getWInitPara() const
+{
+    return m_wInitPara;
+}
+

@@ -64,6 +64,8 @@ namespace layers {
 	
 	virtual void getOutput(const real_t para, real_t *targets) =0; // sampling output from MDN
 
+	virtual void getEMOutput(const real_t para, real_vector &targets) =0; // EM MOPG output
+
 	virtual void getParameter(real_t *targets) =0; // output the parmeter of this unit
 
 	virtual real_t calculateError(real_vector &targets) =0;// the error(-log likelihood)
@@ -103,6 +105,8 @@ namespace layers {
 	
 	virtual void getOutput(const real_t para,real_t *targets);
 	
+	virtual void getEMOutput(const real_t para, real_vector &targets); // EM MOPG output from  
+
 	virtual void getParameter(real_t *targets);
 
 	virtual real_t calculateError(real_vector &targets);
@@ -132,6 +136,8 @@ namespace layers {
 	
 	virtual void getOutput(const real_t para,real_t *targets);
 
+	virtual void getEMOutput(const real_t para, real_vector &targets); // EM MOPG output from  
+
 	virtual void getParameter(real_t *targets);
 
 	virtual real_t calculateError(real_vector &targets);
@@ -151,11 +157,13 @@ namespace layers {
 	
     protected:
 	// data
-	const int m_numMixture;
-	const int m_featureDim;
+	const int   m_numMixture;
+	const int   m_featureDim;
 	real_vector m_offset;
 	real_vector m_tmpPat;
 	real_vector m_varBP;     // vector to store the variance per featuredim/mixture/time
+	real_t      m_varFloor;  // all mixture share the same variance floor
+
     public:
 	MDNUnit_mixture(int startDim, int endDim, int startDimOut, int endDimOut, 
 			int type, Layer<TDevice> &precedingLayer, int outputSize);
@@ -165,6 +173,8 @@ namespace layers {
 	virtual void computeForward();
 	
 	virtual void getOutput(const real_t para, real_t *targets);
+
+	virtual void getEMOutput(const real_t para, real_vector &targets); // EM MOPG output from
 
 	virtual void getParameter(real_t *targets);
 	
@@ -234,6 +244,8 @@ namespace layers {
 	
 	virtual void initPreOutput(const cpu_real_vector &mVec, const cpu_real_vector &vVec);
 	
+	virtual cpu_real_vector getMdnConfigVec();
+
 	void getOutput(const real_t para);
 
 	void exportConfig(const helpers::JsonValue &weightsObject, 

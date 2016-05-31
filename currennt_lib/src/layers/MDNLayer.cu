@@ -39,7 +39,14 @@
 #define SKIP_MARKER helpers::NumericLimits<real_t>::max()
 #define MDN_MIXTURE_VARIANCE_INI 1.0
 #define PI_DEFINITION 3.141215
-#define VARADJUST 2.0
+
+// VARADJUST: parameter for initializing the mean of mixture Gaussian
+// The meean of differerent mixtures will be initialized with equal interval
+// between [-VARADJUST VARADJUST] * var + data_mean
+// EX, for 4 mixtures, [-2, 2] => [-1.5, -0.5, 0.5, 1.5]*var
+// Note: 2.0 may be too large
+//       change it to 0.8
+// #define VARADJUST 0.8 // obsolete, replaced by config->m_varInitPara
 
 
 //#define DEBUG_LOCAL 1
@@ -156,12 +163,13 @@ namespace {
     };
 
     
-    struct CalculateExpSimpleFn
+    struct CalculateExpSimpleFnForVar
     {
 	int NNOutputSize;
 	int startD;
 	int endD;
-	const char *patTypes;
+	real_t varFloor;
+	const char   *patTypes;
 	const real_t *NNOutput;
 
 	__host__ __device__ real_t operator() (const int &outputIdx) const
@@ -176,6 +184,7 @@ namespace {
 
 	    const real_t *data = NNOutput + (NNOutputSize * timeStep ) + dimStep;
 	    real_t b = helpers::safeExp(*data);
+	    b = (b < varFloor)?(varFloor):b;
 	    return b;
 	}
     };
@@ -292,6 +301,42 @@ namespace {
 	    
 	    real_t targetProb = helpers::max(helpers::NumericLimits<real_t>::min(), b);
 	    return -1*log(targetProb);
+	}
+    };
+    
+    // Definition the back-propagation for sigmoid units
+    struct ComputeSigmoidBP
+    {
+	int startD;
+	int endD;
+	int startDOut;
+	int layerSizeOut;
+	int layerSizeIn;
+	const char *patTypes;
+	const real_t *targets;  // targets data
+	real_t *errors;         // errors of previous layer
+	// from 1 to timesteps * para_dim
+	__host__ __device__ void operator() (const thrust::tuple<real_t, int> &t) const
+	{
+	    
+	    int outputIdx = t.get<1>();  // index
+	    real_t prob   = t.get<0>();  // output of NN (probability)
+
+	    // layer size
+	    // The data is not continuous, thus, we have to 
+	    const int timeStep = outputIdx / (endD - startD);
+	    const int dimStep  = (outputIdx % (endD - startD));
+	    
+	    if (patTypes[timeStep] == PATTYPE_NONE)
+		return;
+	    
+	    // target data
+	    const real_t *data = targets + (layerSizeOut * timeStep) + dimStep + startDOut;
+	    
+	    //
+	    const int pos_error= layerSizeIn * timeStep + dimStep + startD;
+	    *(errors+pos_error) = (*(data)>0)?(-1+prob):(prob);
+
 	}
     };
 
@@ -413,6 +458,9 @@ namespace {
 #else
 		tmptmp = tmptmp - featureDim*helpers::safeLog(*(var+i));
 #endif
+		if (tmptmp < helpers::NumericLimits<real_t>::lSMALL())
+		    tmptmp = helpers::NumericLimits<real_t>::lSMALL();
+		
 		//tmptmp = helpers::safeExp(tmptmp);
 		tmp    = helpers::logAdd(tmp, tmptmp);
 		// save  w_i p_i
@@ -729,6 +777,111 @@ namespace {
 	}
     };
     
+    struct copyMixtureWeightforEMGen
+    {
+
+	// copy the predicted parameter into the m_tmpPat
+	int mixture_num;
+	const char *patTypes;
+	real_t *meanDis; 
+	real_t *mdnPara;   // mean value of the mixture
+	int totalTime;   //
+
+	// from 1 to timesteps
+	__host__ __device__ void operator() (const int timeStep) const
+	{
+	    
+	    if (patTypes[timeStep] == PATTYPE_NONE)
+		return;
+	    
+	    real_t tmp = helpers::NumericLimits<real_t>::logZero();
+	    real_t tmptmp;
+	    real_t *meanDisPtr = meanDis + timeStep * mixture_num;
+	    
+	    int pos = timeStep*mixture_num;
+	    const real_t *mixtureW = mdnPara + pos; // point to the weight
+	    	    
+	    for (int i = 0; i<mixture_num; i++){
+		tmptmp = helpers::safeLog(*(mixtureW+i));
+		tmp    = helpers::logAdd(tmp, tmptmp);
+		// save  w_i p_i
+		*(meanDisPtr+i) = tmptmp; 
+	    }
+	    // save sum_i^mixture_num w_i p_i
+	    meanDisPtr = meanDis + totalTime * mixture_num + timeStep;
+	    *meanDisPtr= tmp;
+	    //return -1*helpers::safeLog(tmp);
+	}
+
+    };
+    
+    struct initIterEMGen
+    {
+	// it seems that there is no need to differentiate the equation
+	// for initialzation and iteration on the EM estimation
+	// For initialization, just assume posterior probability is equal for all mixtures
+	// For iteration, just plug in the posterior probability
+
+	int featureDim;
+	int mixtureNM;
+	int totalTime;
+	int outputSize;
+	int startDOut;
+
+	real_t *postP;
+	real_t *mdnPara;
+	real_t *targets;
+	const char *patTypes;
+	
+	// u = (sum_i u_i/var_i^2) / (sum_i /var_i^2)
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    int timeStep = idx / (featureDim);
+	    int dimOutput= idx % (featureDim);
+
+	    if (patTypes[timeStep] == PATTYPE_NONE)
+		return;
+	    const real_t *m, *v, *p, *q;
+	    /*const real_t *w;
+	      int pos_w    = timeStep*mixtureNM;*/
+	    // FATAL ERROR: remember to shift dimOutput
+	    int pos_mean = totalTime*mixtureNM + timeStep*featureDim*mixtureNM + dimOutput;
+	    int pos_var  = totalTime*(mixtureNM+featureDim*mixtureNM)+timeStep * mixtureNM;
+	    int pos_postM = timeStep * mixtureNM;
+	    int pos_postS = totalTime * mixtureNM + timeStep;
+
+	    real_t tmp1=0.0;
+	    real_t tmp2=0.0;
+	    
+	    /*real_t tmp3=0.0;
+	    int widx = 0;
+	    */
+	    for(int i = 0; i < mixtureNM; i++){
+		v = mdnPara + pos_var   + i;
+		m = mdnPara + pos_mean  + (i*featureDim);
+		p = postP   + pos_postM + i;
+		q = postP   + pos_postS;
+		
+		/*
+		  w = mdnPara + pos_w   + i;
+		  if ((*w)>tmp3){
+		      widx = i;
+		      tmp3 = *w;
+		  }
+		*/
+
+		tmp2 += helpers::safeExp((*p)-(*q))/((*v)*(*v));
+		tmp1 += ((*m)*(helpers::safeExp((*p)-(*q))))/((*v)*(*v));
+	    }
+
+	    tmp1 = tmp1/tmp2;
+	    // tmp1 = mdnPara[pos_mean+widx*featureDim];
+	    int pos_tar = timeStep * outputSize + startDOut + dimOutput;
+	    *(targets+pos_tar) = tmp1;
+	}
+    };
+
+    
     real_t safeLog(real_t x)
     {
 	if (x < 1.1754944e-038f)
@@ -737,7 +890,19 @@ namespace {
 	    return std::log(x);
     }
 
+    
+
 #ifdef DEBUG_LOCAL
+
+    real_t safeExp(real_t x)
+    {
+	if (x <= -1e30f){
+	    return 0;
+	}else if(x >= 88.722839)
+	    return 3.4028235e+038f;
+	else
+	    return std::exp(x);
+    }
 
     real_t logAdd(real_t x, real_t y)
     {
@@ -769,7 +934,7 @@ namespace {
 	    }
     }
 #endif    
-
+    
 }
 }
 
@@ -918,13 +1083,29 @@ namespace layers {
 		   thrust::counting_iterator<int>(0)+n,
 		   this->m_paraVec.begin(),
 		   fn);
+#ifdef DEBUG_LOCAL
+		Cpu::real_vector tmp1 = this->m_paraVec;
+		Cpu::real_vector tmp2 = this->m_precedingLayer.outputs();
+		for (int i = 0; i<n; i++){
+		    printf("SigForward: %f %f\n", tmp1[i], tmp2[i]);
+		}
+#endif
+
 	}}	    
 	
+    }
+
+    template <typename TDevice>
+    void MDNUnit_sigmoid<TDevice>::getEMOutput(const real_t para, real_vector &targets)
+    {	
+	// no EM (no mixture at all), just sampling 
+	this->getOutput(para, helpers::getRawPointer(targets));
     }
 	
     template <typename TDevice>
     void MDNUnit_sigmoid<TDevice>::getOutput(const real_t para, real_t *targets)
     {
+	// Here, probability is directly used as output
 	// sampling output
 	{{
 		internal::SamplingSigmoid fn;
@@ -951,11 +1132,22 @@ namespace layers {
     template <typename TDevice>
     void MDNUnit_sigmoid<TDevice>::getParameter(real_t *targets)
     {
-	// copy directly
-	{{
+	// STUPID MISTAKE
+	/*{{
 		internal::CopySimple fn;
-		fn.Output   = targets;
-		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		...
+	}}*/
+	{{
+		// actually not sampling. but the method is the same
+		// only the position of output is different
+		// just borrow the function
+		internal::SamplingSigmoid fn;
+		fn.NNTargetSize = this->m_precedingLayer.size();
+		fn.startDTarget = this->m_startDim;
+		fn.endDTarget   = this->m_endDim;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNTarget     = targets; 
+
 		int n =this->m_precedingLayer.curMaxSeqLength();
 		n = n*this->m_precedingLayer.parallelSequences();
 		n = n*this->m_paraDim;
@@ -1000,6 +1192,25 @@ namespace layers {
 			 thrust::plus<real_t>()
 		      );
 		
+#ifdef DEBUG_LOCAL
+		Cpu::real_vector tmp1 = targets;
+		Cpu::real_vector tmp2 = this->m_paraVec;
+		int PosTar;
+		real_t data, target;
+		real_t prop = 0.0;
+		for (int i = 0; i<(n/this->m_paraDim); i++){
+		    for (int j = 0; j < this->m_paraDim; j++){
+			data = tmp2[i*this->m_paraDim + j];
+			target= tmp1[i*fn.layerSizeOut + fn.startDOut + j];
+			if (target>0)
+			    prop += -1*internal::safeLog(data);
+			else
+			    prop += -1*internal::safeLog(1-data);
+		    }
+		}
+		printf("Prob: %f\t", prop);
+#endif
+
 	}}
 	return tmp;
     }
@@ -1007,9 +1218,58 @@ namespace layers {
     template <typename TDevice>
     void MDNUnit_sigmoid<TDevice>::computeBackward(real_vector &targets)
     {
+	
 	{{
+		internal::ComputeSigmoidBP fn;
+		fn.startD       = this->m_startDim;
+		fn.endD         = this->m_endDim;
+		fn.layerSizeOut = this->m_layerSizeTar;
+		fn.startDOut    = this->m_startDimOut;
+		fn.layerSizeIn  = this->m_precedingLayer.size();
+
+		fn.errors    = helpers::getRawPointer(this->m_precedingLayer.outputErrors());
+		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.targets   = helpers::getRawPointer(targets);
+
+		int n =this->m_precedingLayer.curMaxSeqLength();
+		n = n*this->m_precedingLayer.parallelSequences();
+		n = n*this->m_paraDim;
+		
+		thrust::for_each(
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin(), 
+						thrust::counting_iterator<int>(0))),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+n, 
+						thrust::counting_iterator<int>(0)+n)),
+			 fn);
+
+#ifdef DEBUG_LOCAL
+		Cpu::real_vector tmp1 = targets;
+		Cpu::real_vector tmp2 = this->m_paraVec;
+		Cpu::real_vector tmp3 = this->m_precedingLayer.outputErrors();
+
+		real_t data, target;
+		real_t prop = 0.0;
+		for (int i = 0; i<(n/this->m_paraDim); i++){
+		    for (int j = 0; j < this->m_paraDim; j++){
+			data = tmp2[i*this->m_paraDim + j];
+			target= tmp1[i*fn.layerSizeOut + fn.startDOut + j];
+			if (target>0)
+			    prop = -1+data;
+			else
+			    prop = 1*data;
+			
+			printf("Back: %f\t", prop);
+		    }
+		    printf("\n");
+		}
+#endif
+		
 		
 	}}
+		
+	
     }
 
     /********************************************************
@@ -1174,6 +1434,11 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void MDNUnit_softmax<TDevice>::getEMOutput(const real_t para,real_vector &targets)
+    {
+    }
+
+    template <typename TDevice>
     void MDNUnit_softmax<TDevice>::getOutput(const real_t para,real_t *targets)
     {
 	{{    
@@ -1261,6 +1526,7 @@ namespace layers {
 			   outputSize)
 	, m_numMixture    (type)
 	, m_featureDim    ((endDim - startDim - type*2)/type)
+	, m_varFloor      (0.0)
     {                                                          
 	
 	// offset for the mixture weight
@@ -1324,14 +1590,15 @@ namespace layers {
 		
 		wInit.reserve((this->m_endDim-this->m_startDim) * 
 			      tLayer->precedingLayer().size());
-		boost::random::uniform_real_distribution<real_t> dist1(-0.5/tLayer->size(), 
-								       0.5/tLayer->size());
+		boost::random::uniform_real_distribution<real_t> dist1(
+			      -1*config.getWInitPara()/tLayer->precedingLayer().size(), 
+			       config.getWInitPara()/tLayer->precedingLayer().size());
 		for (int i =0; 
 		     i<((this->m_endDim-this->m_startDim) * tLayer->precedingLayer().size()); 
 		     i++)
 		    wInit.push_back(dist1(*gen));
 		
-		// set w to zero, set b to mean+variance
+		// set w to uniform distribution, set b to mean+variance
 		// w starts at precedingSize * startDim
 		thrust::copy(wInit.begin(),
 			     wInit.end(),
@@ -1346,19 +1613,22 @@ namespace layers {
 		for (int i =0; i<(this->m_endDim - this->m_startDim); i++)
 		    biasInit.push_back(1.0/(real_t)m_numMixture);
 		
+		
 		// adjust the bias for mean
-		real_t step = (VARADJUST+VARADJUST)/m_numMixture;
-		real_t start= -1*VARADJUST-0.5;
+		real_t step = (config.getVarInitPara()*2)/(m_numMixture+1);
+		real_t start= -1*config.getVarInitPara()+step;
 		for (int i =0; i<m_numMixture; i++){
 		    for (int j=0; j<m_featureDim; j++)
 			biasInit[m_numMixture + i*m_featureDim + j] = 
 			    mVecTmp[this->m_startDimOut+j] + 
-			    (step * (i+1) + start) * vVecTmp[this->m_startDimOut+j];
+			    (step * i + start) * vVecTmp[this->m_startDimOut+j];
 		}		
 		// set the same for variance
 		for (int i = 0; i<m_numMixture; i++)
 		    biasInit[m_numMixture*(m_featureDim+1) + i] = internal::safeLog(vVecAver);
 		
+		this->m_varFloor = config.getVFloorPara() * vVecAver;
+
 		// set bias for mixture weight
 		thrust::copy(biasInit.begin(),
 			     biasInit.end(),
@@ -1484,13 +1754,15 @@ namespace layers {
 	// the variance part
 	// calculate the Exp
 	{{
-		internal::CalculateExpSimpleFn fn;
+		internal::CalculateExpSimpleFnForVar fn;
 		fn.NNOutputSize = this->m_precedingLayer.size();
 		fn.startD       = this->m_startDim + this->m_numMixture*(1+this->m_featureDim);
 		fn.endD         = this->m_endDim;
+		
+		fn.varFloor     = this->m_varFloor;
 		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
 		fn.NNOutput     = helpers::getRawPointer(this->m_precedingLayer.outputs());
-		
+
 		int n =this->m_precedingLayer.curMaxSeqLength();
 		n = n*this->m_precedingLayer.parallelSequences();
 		
@@ -1527,11 +1799,256 @@ namespace layers {
 
     }
 
+
+    template <typename TDevice>
+    void MDNUnit_mixture<TDevice>::getEMOutput(const real_t para, real_vector &targets)
+    {
+
+	const Configuration &config = Configuration::instance();
+
+	int totalTime = this->m_precedingLayer.curMaxSeqLength();
+	totalTime     = totalTime*this->m_precedingLayer.parallelSequences();
+	int time      = totalTime*(this->m_endDimOut - this->m_startDimOut);
+	
+	/*Modify */
+	// initialization of the output 
+	// thrust::fill(this->m_tmpPat.begin(), this->m_tmpPat.end(), 0.0);
+
+	// initialization of the output using predicted weights
+	{{
+		internal::copyMixtureWeightforEMGen fn;
+		fn.mixture_num  = this->m_numMixture;		
+		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.meanDis   = helpers::getRawPointer(this->m_tmpPat);
+		fn.mdnPara   = helpers::getRawPointer(this->m_paraVec);
+
+		int n =this->m_precedingLayer.curMaxSeqLength();
+		n = n*this->m_precedingLayer.parallelSequences();
+		
+		fn.totalTime = n;
+		thrust::for_each(thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0)+n,
+				 fn
+				 );
+		
+		
+#ifdef DEBUG_LOCAL
+		
+		Cpu::real_vector tvec1;
+		Cpu::real_vector tvec2;
+		tvec1 = this->m_paraVec;
+		tvec2 = this->m_tmpPat;
+		for (int i = 0; i < n; i++){
+		    printf("");
+		}
+#endif
+
+	}}
+
+	
+	real_t outP   = 0.0;
+	bool finish =false;
+	int iter    =0;
+	while(!finish)
+	{   
+	    
+	    {{
+		internal::initIterEMGen fn;
+		fn.featureDim   = this->m_featureDim;
+		fn.mixtureNM    = this->m_numMixture;
+		fn.outputSize   = this->m_layerSizeTar;
+		fn.startDOut    = this->m_startDimOut;
+		fn.totalTime    = totalTime;
+
+		fn.postP        = helpers::getRawPointer(this->m_tmpPat);
+		fn.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.targets      = helpers::getRawPointer(targets);
+		thrust::for_each(
+				  thrust::counting_iterator<int>(0),
+				  thrust::counting_iterator<int>(0)+time,
+				  fn);
+
+#ifdef DEBUG_LOCAL
+		
+		Cpu::real_vector mdnPara;
+		Cpu::real_vector postP;
+		Cpu::real_vector tar;
+		mdnPara = this->m_paraVec;
+		postP   = this->m_tmpPat;
+		tar     = targets;
+		for (int idx = 0; idx < time; idx ++){
+		    int timeStep = idx / (fn.featureDim);
+		    int dimOutput= idx % (fn.featureDim);
+
+		    real_t m, v, p, q;
+		    int pos_mean = fn.totalTime * fn.mixtureNM + 
+			timeStep * fn.featureDim * fn.mixtureNM + dimOutput;
+		    int pos_var  = fn.totalTime * (fn.mixtureNM + fn.featureDim * fn.mixtureNM) 
+			+ timeStep * fn.mixtureNM;
+		    int pos_postM= timeStep * fn.mixtureNM;
+		    int pos_postS= fn.totalTime*fn.mixtureNM + timeStep;
+
+		    real_t tmp1=0.0;
+		    real_t tmp2=0.0;
+		    for(int i = 0; i < fn.mixtureNM; i++){
+			v = mdnPara[pos_var];
+			m = mdnPara[pos_mean];
+			p = postP[pos_postM];
+			q = postP[pos_postS];
+
+			tmp2 += exp(p-q)/((v)*(v));
+			tmp1 += ((m)*(exp(p-q)))/((v)*(v));
+			pos_var += 1; // move to the next mixture
+			pos_mean += fn.featureDim; // move to the next mixture
+			pos_postM+=1;
+		    }
+		    tmp1 = tmp1/tmp2;
+		    printf("Time %d %d %f:\n", timeStep, dimOutput, tmp1);
+		}
+#endif
+
+
+	    }}
+
+	    // iteration
+	    {{
+		
+		// calculate the posterior probability using the functions in calculateError
+		internal::ComputeMixtureDistance fn;
+		fn.startDOut    = this->m_startDimOut;
+		fn.mixture_num  = this->m_numMixture;
+		fn.featureDim   = this->m_featureDim;
+		fn.layerSizeOut = this->m_layerSizeTar;
+
+		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.output    = helpers::getRawPointer(targets);
+		fn.mdnPara   = helpers::getRawPointer(this->m_paraVec);
+
+		int n =this->m_precedingLayer.curMaxSeqLength();
+		n = n*this->m_precedingLayer.parallelSequences();
+		fn.totaltime = n;
+		n = n*this->m_numMixture;
+
+		thrust::transform(thrust::counting_iterator<int>(0),
+				  thrust::counting_iterator<int>(0)+n,
+				  this->m_tmpPat.begin(),
+				  fn);		
+
+#ifdef DEBUG_LOCAL
+		Cpu::real_vector temp_vec1;
+		Cpu::real_vector temp_vec2;
+		Cpu::real_vector temp_vec3;
+		Cpu::real_vector temp_vec4;
+		
+		temp_vec1 = this->m_paraVec;
+		temp_vec2 = targets;
+		temp_vec3 = this->m_tmpPat;
+		temp_vec4  = this->m_precedingLayer.patTypes();
+		printf("MixtureDistance\n");
+		for (int t = 0; t < n; t++){
+		    real_t tmp=0.0;
+		    real_t tmptmp;
+
+		    int timeStep = (t/fn.mixture_num);
+		    int mixIndex = (t%fn.mixture_num);
+		    int pos_data = fn.layerSizeOut * timeStep + fn.startDOut;
+		    int pos_mean = fn.totaltime * fn.mixture_num + 
+			timeStep*fn.featureDim*fn.mixture_num+mixIndex*fn.featureDim;
+		    int pos_var  = fn.totaltime * (fn.mixture_num + 
+						   fn.mixture_num * fn.featureDim) +
+			timeStep*fn.mixture_num + mixIndex;
+		    
+		    for (int i = 0; i<fn.featureDim; i++){
+			tmp += ((temp_vec2[pos_data+i]) - temp_vec1[pos_mean+i]) * 
+			    ((temp_vec2[pos_data+i]) - temp_vec1[pos_mean+i])
+			    /(temp_vec1[pos_var])
+			    /(temp_vec1[pos_var])/2;
+		    }
+		    printf("%f %f %f %f\t", temp_vec1[pos_mean], temp_vec2[pos_data], 
+			   temp_vec1[pos_var], tmp);
+		    if (mixIndex==(fn.mixture_num - 1))
+			printf("\n");
+		}
+		printf("\nEnd\n");
+#endif
+	    }}
+
+	    {{
+		internal::ComputeMixtureError fn;
+		fn.startD    = this->m_startDim;
+		fn.endD      = this->m_endDim;
+		fn.startDOut = this->m_startDimOut;
+		fn.mixture_num  = this->m_numMixture;
+		fn.featureDim   = this->m_featureDim;
+		fn.layerSizeOut = this->m_layerSizeTar;
+		
+		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.meanDis   = helpers::getRawPointer(this->m_tmpPat);
+		fn.mdnPara   = helpers::getRawPointer(this->m_paraVec);
+
+		int n =this->m_precedingLayer.curMaxSeqLength();
+		n = n*this->m_precedingLayer.parallelSequences();
+		
+		fn.totalTime = n;
+
+		outP = thrust::transform_reduce(thrust::counting_iterator<int>(0),
+					       thrust::counting_iterator<int>(0)+n,
+					       fn,
+					       (real_t)0.0,
+					       thrust::plus<real_t>());
+		if (outP != outP){
+		    printf("\t\t Fail to converge\n");
+		}else{
+		    printf("\t\t Output likelihood/dim (-log): %f\n", outP/n/this->m_featureDim);
+		}
+
+#ifdef DEBUG_LOCAL
+		
+		Cpu::real_vector tvec1;
+		Cpu::real_vector tvec2;
+		tvec1 = this->m_paraVec;
+		tvec2 = this->m_tmpPat;
+		for (int t = 0; t < n; t++){
+		    real_t tmp=-1e30;
+		    real_t tmptmp;
+		    
+		    int meanPos = t * fn.mixture_num;
+		    int mixPos  = t * fn.mixture_num;
+		    int varPos  = fn.totalTime*(fn.mixture_num+fn.mixture_num*fn.featureDim)+
+			t * fn.mixture_num;
+		    
+		    for (int i = 0; i<fn.mixture_num; i++){
+			
+			tmptmp = std::log(tvec1[mixPos+i])-(tvec2[meanPos+i]);
+			tmptmp = tmptmp - fn.featureDim/2*std::log(2*PI_DEFINITION);
+			// change this line according to ALTER_TIEVAR
+			//tmptmp = tmptmp - fn.featureDim*std::log(tvec1[varPos]);
+			tmptmp = tmptmp - fn.featureDim*std::log(tvec1[varPos+i]);
+			//tmptmp = std::exp(tmptmp);
+			tmp   = internal::logAdd(tmp, tmptmp);
+			printf("%f\t", tmptmp);
+			printf("%f\t", tvec2[t*fn.mixture_num + i]);
+		    }
+		    printf("%f \n", tvec2[fn.totalTime*fn.mixture_num + t]);
+		    printf("%f \n", tmp);
+		}
+		
+#endif
+
+	    }}
+	    iter++;
+	    
+	    if (iter >= config.EMIterNM())
+		finish = true;
+	}
+	
+    }
+
     template <typename TDevice>
     void MDNUnit_mixture<TDevice>::getOutput(const real_t para,real_t *targets)
     {
 
-	
 	int time = this->m_precedingLayer.curMaxSeqLength();
 	time = time*this->m_precedingLayer.parallelSequences();
 	time = time*(this->m_endDimOut - this->m_startDimOut);
@@ -1678,7 +2195,7 @@ namespace layers {
 		temp_vec1 = this->m_paraVec;
 		temp_vec2 = targets;
 		temp_vec3 = this->m_tmpPat;
-		printf("MixtureDistance\n");
+		printf("MixtureDistance: data, mean, var, dis_over_dim\n");
 		for (int t = 0; t < n; t++){
 		    real_t tmp=0.0;
 		    real_t tmptmp;
@@ -1695,11 +2212,12 @@ namespace layers {
 		    for (int i = 0; i<fn.featureDim; i++){
 			tmp += (temp_vec2[pos_data+i] - temp_vec1[pos_mean+i]) * 
 			    (temp_vec2[pos_data+i] - temp_vec1[pos_mean+i])
-			    /(temp_vec1[pos_var])
-			    /(temp_vec1[pos_var])/2;
+			    /(temp_vec1[pos_var+mixIndex])
+			    /(temp_vec1[pos_var+mixIndex])/2;
 		    }
-		    printf("%f %f %f %f\t", temp_vec1[pos_mean], temp_vec2[pos_data], 
-			   temp_vec1[pos_var], tmp);
+		    printf("%03.4f %03.4f %03.4e %03.4e\t", 
+			   temp_vec2[pos_data], temp_vec1[pos_mean], 
+			   temp_vec1[pos_var+mixIndex], tmp);
 		    if (mixIndex==(fn.mixture_num - 1))
 			printf("\n");
 		}
@@ -1712,7 +2230,8 @@ namespace layers {
 	// step2: calcualte the - log likelihood
 	//     save w_i p_i to m_tmpPat[0 : totalTime*mixture_num]
 	// and save the sum_i^mixture_num w_i p_i to m_tmpPat[totalTime*mixture_num:end]
-	real_t tmp = 0.0;
+	//     (for both likelihood calculation and back-propagation)
+	real_t mixError = 0.0;
 	{{
 		internal::ComputeMixtureError fn;
 		fn.startD    = this->m_startDim;
@@ -1731,11 +2250,13 @@ namespace layers {
 		
 		fn.totalTime = n;
 
-		tmp = thrust::transform_reduce(thrust::counting_iterator<int>(0),
-					       thrust::counting_iterator<int>(0)+n,
-					       fn,
-					       (real_t)0.0,
-					       thrust::plus<real_t>());
+#ifndef DEBUG_LOCAL
+		mixError = thrust::transform_reduce(thrust::counting_iterator<int>(0),
+						    thrust::counting_iterator<int>(0)+n,
+						    fn,
+						    (real_t)0.0,
+						    thrust::plus<real_t>());
+#endif
 
 #ifdef DEBUG_LOCAL
 		
@@ -1743,6 +2264,7 @@ namespace layers {
 		Cpu::real_vector tvec2;
 		tvec1 = this->m_paraVec;
 		tvec2 = this->m_tmpPat;
+		printf("Calculate Error: mixture, sum\n");
 		for (int t = 0; t < n; t++){
 		    real_t tmp=-1e30;
 		    real_t tmptmp;
@@ -1756,18 +2278,27 @@ namespace layers {
 			
 			tmptmp = std::log(tvec1[mixPos+i])-(tvec2[meanPos+i]);
 			tmptmp = tmptmp - fn.featureDim/2*std::log(2*PI_DEFINITION);
-			tmptmp = tmptmp - fn.featureDim*std::log(tvec1[varPos]);
+			tmptmp = tmptmp - fn.featureDim*std::log(tvec1[varPos+i]);
+			
+			if (tmptmp!=tmptmp || tmptmp < -0.5e10f){
+			    tmptmp = -0.5e10f;
+			}
 			//tmptmp = std::exp(tmptmp);
 			tmp   = internal::logAdd(tmp, tmptmp);
-			printf("%f\t", tvec2[t*fn.mixture_num + i]);
+			//printf("%f\t", tvec2[t*fn.mixture_num + i]);
+			printf("%f\t", tmptmp);
+			tvec2[t*fn.mixture_num + i] = tmptmp;
 		    }
-		    printf("%f \n", tvec2[fn.totalTime*fn.mixture_num + t]);
+		    //printf("%f \n", tvec2[fn.totalTime*fn.mixture_num + t]);
+		    printf("%f \n", tmp);
+		    tvec2[fn.totalTime*fn.mixture_num + t] = tmp;
+		    mixError -= tmp;
 		}
-		
+		printf("Error done\n");
+		this->m_tmpPat = tvec2;
 #endif
-
 	}}
-	return tmp;
+	return mixError;
     }                
 
     template <typename TDevice>
@@ -1776,7 +2307,7 @@ namespace layers {
 	
 	// clean the outputErrors
 	{{
-		// In the original case, each dimension in outputErrors() will be assigned new value
+		// In the original case, each dimension in outputErrors will be assigned new value
 		// Thus, no need to reset outputErrors
 		// However, for updating the variance here, we accumulate the gradients.
 		// Thus, need to reset outputErrors
@@ -1811,8 +2342,9 @@ namespace layers {
 				 thrust::counting_iterator<int>(0)+n,
 				 fn
 				 );
+
 #ifdef DEBUG_LOCAL
-		
+		printf("Gradient for mixture weight\n");
 		Cpu::real_vector mdnPara = this->m_paraVec;
 		Cpu::real_vector meanDis = this->m_tmpPat;
 		Cpu::real_vector errors  = this->m_precedingLayer.outputErrors();
@@ -1829,12 +2361,14 @@ namespace layers {
 		    int pos = timeStep * fn.mixture_num + mixtureI;
 		    const real_t sigma  = mdnPara[pos];
 
-		 
+		    // Time, gradient
 		    // store the gradients
 		    pos = timeStep * fn.NNOutputSize + fn.startD + mixtureI;
-		    printf("%d %f", timeStep, sigma - std::exp(meanDis[postP]-meanDis[sumPost]));
-		    if (mixtureI == fn.mixture_num - 1)
+		    if (mixtureI == fn.mixture_num - 1){
+			printf("(only last dim) %d %f\t", 
+			       timeStep, sigma - std::exp(meanDis[postP]-meanDis[sumPost]));
 			printf("\n");
+		    }
 		}
 		printf("GrafEnd\n");
 #endif
@@ -1896,36 +2430,39 @@ namespace layers {
 		Cpu::real_vector meanDis= this->m_tmpPat;
 		Cpu::real_vector target = targets;
 		Cpu::real_vector varBuf = this->m_varBP;
-
+		Cpu::real_vector errorVBuf;
 		real_t errorm(0.0), errorv(0.0);
-
+		printf("Gradient for mean and variance of every mixture: time errorm errorv ...\n");
+		n = fn.totalTime * this->m_numMixture * this->m_featureDim;
+		
+		errorVBuf.resize(n, 0.0);
 		for (int i = 0; i<n; i++){
 		    int outputIdx = i;
 		    const int timeStep = outputIdx / (fn.mixture_num * fn.featureDim);
-
 
 		    const int tmp = outputIdx % (fn.mixture_num * fn.featureDim);
 		    const int mixtureI = tmp / fn.featureDim;
 		    const int featureI = tmp % fn.featureDim;
 	    
 		    // pointer to the mean gradient
-		    int meanshift = timeStep*fn.layerSize+fn.startD+
+		    int meanshift_error = timeStep*fn.layerSize+fn.startD+
 			mixtureI*fn.featureDim + featureI;
 		    //real_t errorm = errors[meanshift_pos];
 
-		    int varshift   = timeStep*fn.layerSize+fn.startD+fn.mixture_num*fn.featureDim;
+		    int varshift_error= timeStep*fn.layerSize +
+			fn.startD + fn.mixture_num*fn.featureDim + mixtureI;
 		    //real_t errorv = errors[varshift];
 	    
 		    // pointer to the target data y
 		    const real_t tardata= target[timeStep*fn.layerSizeOut+fn.startDOut+featureI];
 
 		    // pointer to the mean
-		    meanshift= fn.totalTime * fn.mixture_num + 
+		    int meanshift= fn.totalTime * fn.mixture_num + 
 			timeStep * fn.mixture_num * fn.featureDim + 
 			mixtureI * fn.featureDim + 
 			featureI;
-		    varshift = fn.totalTime * fn.mixture_num * (1 + fn.featureDim) + 
-			timeStep * fn.mixture_num;
+		    int varshift = fn.totalTime * fn.mixture_num * (1 + fn.featureDim) + 
+			timeStep * fn.mixture_num + mixtureI;
 	    
 		    const real_t mean  = mdnPara[meanshift];
 		    const real_t var   = mdnPara[varshift];
@@ -1933,15 +2470,26 @@ namespace layers {
 		    // pointer to the posterior P and sum of posterior P
 		    const real_t postP = meanDis[timeStep * fn.mixture_num + mixtureI];
 		    const real_t sumPost=meanDis[fn.totalTime* fn.mixture_num + timeStep];
-		    real_t posterior = std::exp((postP) - (sumPost));
+		    real_t posterior = internal::safeExp((postP) - (sumPost));
 		    (errorm) = posterior*(mean - tardata)/(var)/(var);
 		    
-		    (errorv) = posterior - (errorm)*(mean - tardata);
-		    
-		    printf("%d %d %f %f\t", timeStep, mixtureI, errorm, errorv);
+		    (errorv) += posterior - (errorm)*(mean - tardata);
+		    errorVBuf[i] = posterior - (errorm)*(mean - tardata);
+		    /*if (errorVBuf[i]<-5 || errorVBuf[i]>5)
+		      printf("get");*/
+		    if (mixtureI == 0 && featureI ==0)
+			printf("%d\t", timeStep);
 		    if (featureI==fn.featureDim - 1){
-			printf("\n");
+			printf("%d %3.4f %3.4f \t\t", mixtureI, errorm, errorv);		    
+			/*if (errorv > 100 || errorv < -100.0){
+			    printf("get");
+			    for (int j=0; j<fn.featureDim; j++)
+				printf("%3.4f ", errorVBuf[i-j]);
+				}*/
 			errorv = 0;
+			if (mixtureI==(fn.mixture_num - 1)){
+			    printf("\n");
+			}
 		    }
 		}
 		
@@ -2095,8 +2643,14 @@ namespace layers {
     real_t MDNLayer<TDevice>::calculateError()
     {
 	real_t temp = 0.0;
+	real_t temp2= 0.0;
+	int i=0;
 	BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
-	    temp += mdnUnit->calculateError(this->_targets());
+	    temp2 = mdnUnit->calculateError(this->_targets());
+	    if (temp2 != temp2)
+		printf("NaN: %d-th unit\t", i);
+	    temp += temp2;
+	    ++i;
 	}
 	return temp;
     }
@@ -2154,14 +2708,15 @@ namespace layers {
     template <typename TDevice>
     void MDNLayer<TDevice>::getOutput(const real_t para)
     {
-	if (para < -2.0){
+	// Modify 05-24 Add support to EM-style generation
+	if (para < -3.0){
 	    throw std::runtime_error("Parameter to MDN->getOutput can't be less than -1.0");
 	}else if (para >= 0.0){
 	    BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
 		mdnUnit->getOutput(para, helpers::getRawPointer(this->_targets()));
 	    }
 	    printf("sampling with variance scaled by %f", para);
-	}else{
+	}else if (para > -1.50){
 	    printf("generating the parameters of MDN");
 	    this->m_mdnParaVec.resize(this->m_mdnParaDim*
 				      this->precedingLayer().curMaxSeqLength()*
@@ -2170,12 +2725,25 @@ namespace layers {
 	    BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
 		mdnUnit->getParameter(helpers::getRawPointer(this->m_mdnParaVec));
 	    }
+	}else{
+	    printf("EM-style generation\n");
+	    int i = 0;
+	    BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
+		printf("U%d",i++);
+		mdnUnit->getEMOutput(para, this->_targets());
+	    }
 	}
 
 #ifdef DEBUG_LOCAL
 	Cpu::real_vector temp=this->_targets();
 	printf("Sampling: %f \n", temp[0]);
 #endif	
+    }
+    
+    template <typename TDevice>
+    Cpu::real_vector MDNLayer<TDevice>::getMdnConfigVec()
+    {
+	return m_mdnConfigVec;
     }
     
     template <typename TDevice>

@@ -145,7 +145,9 @@ namespace layers {
 	
 	/* Read in the weight mask */
 	void readWeightMask(std::vector<real_t>::iterator b, std::vector<real_t>::iterator e);
+
 	const bool& flagUseWeightMask() const;
+
 	virtual void maskWeight();
 	
 	
@@ -176,6 +178,8 @@ namespace layers {
 	   only defines for Trainable Layers
 	 */
 	virtual void reInitWeight();
+	
+	void reReadWeight(const helpers::JsonValue &weightsSection);
 	
     };
 

@@ -354,13 +354,73 @@ namespace layers {
 	    
 	}
 	else {
-	    boost::random::normal_distribution<real_t> dist(config.weightsDistributionNormalMean(), config.weightsDistributionNormalSigma());
+	    boost::random::normal_distribution<real_t> dist(config.weightsDistributionNormalMean(), 
+							    config.weightsDistributionNormalSigma());
 	    for (size_t i = 0; i < weights.size(); ++i)
 		weights[i] = dist(*gen);
 	}
 	m_weights       = weights;
         m_weightUpdates = weights;
 
+    }
+    
+    // Add 0527: re-read the weight from weightsSection
+    template <typename TDevice>
+    void TrainableLayer<TDevice>::reReadWeight(const helpers::JsonValue &weightsSection)
+    {
+	Cpu::real_vector weights;
+	if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())){
+	    const rapidjson::Value &weightsChild = (*weightsSection)[this->name().c_str()];
+            if (!weightsChild.IsObject())
+                throw std::runtime_error(std::string("Weights section for layer '") + 
+					 this->name() + "' is not an object");
+            if (!weightsChild.HasMember("input") || !weightsChild["input"].IsArray())
+                throw std::runtime_error(std::string("Missing array 'weights/") + 
+					 this->name() + "/input'");
+            if (!weightsChild.HasMember("bias") || !weightsChild["bias"].IsArray())
+                throw std::runtime_error(std::string("Missing array 'weights/") + 
+					 this->name() + "/bias'");
+            if (!weightsChild.HasMember("internal") || !weightsChild["internal"].IsArray())
+                throw std::runtime_error(std::string("Missing array 'weights/") + 
+					 this->name() + "/internal'");
+	    const rapidjson::Value &inputWeightsChild    = weightsChild["input"];
+            const rapidjson::Value &biasWeightsChild     = weightsChild["bias"];
+            const rapidjson::Value &internalWeightsChild = weightsChild["internal"];
+
+            if (inputWeightsChild.Size() != this->size() * 
+		m_inputWeightsPerBlock * m_precedingLayer.size())
+                throw std::runtime_error(std::string("Invalid number of input weights for layer '") 
+					 + this->name() + "'");
+            if (biasWeightsChild.Size() != this->size() * m_inputWeightsPerBlock)
+                throw std::runtime_error(std::string("Invalid number of bias weights for layer '") 
+					 + this->name() + "'");
+            if (internalWeightsChild.Size() != this->size() * m_internalWeightsPerBlock)
+                throw std::runtime_error(std::string("Invalid number of internal for layer '") 
+					 + this->name() + "'");
+
+            weights.reserve(inputWeightsChild.Size() + 
+			    biasWeightsChild.Size() + 
+			    internalWeightsChild.Size());
+
+            for (rapidjson::Value::ConstValueIterator it = inputWeightsChild.Begin(); 
+		 it != inputWeightsChild.End(); 
+		 ++it)
+                weights.push_back(static_cast<real_t>(it->GetDouble()));
+            for (rapidjson::Value::ConstValueIterator it = biasWeightsChild.Begin(); 
+		 it != biasWeightsChild.End(); 
+		 ++it)
+                weights.push_back(static_cast<real_t>(it->GetDouble()));
+            for (rapidjson::Value::ConstValueIterator it = internalWeightsChild.Begin(); 
+		 it != internalWeightsChild.End(); 
+		 ++it)
+                weights.push_back(static_cast<real_t>(it->GetDouble()));
+	    
+	    m_weights       = weights;
+	    m_weightUpdates = weights;
+	    
+	}else{
+	    throw std::runtime_error(std::string("Can't find layer:")+this->name().c_str());
+	}
     }
     
     // explicit template instantiations

@@ -157,13 +157,21 @@ public:
     std::vector<std::vector<std::vector<real_t> > > getOutputs(const int  layerID =-1, 
 							       const bool gateFromOutput=false,
 							       const real_t  mdnoutput=-1.0);
-
+    
+    /**
+     * Read in the weight from trained_network.jsn or .autosave
+     * 
+     */
+    void importWeights(const helpers::JsonDocument &jsonDoc, const std::string &ctrStr);
+    
     /* Add 16-02-22 Wang: for WE updating */
     // repare for we updateing
     bool initWeUpdate(const std::string weBankPath, const unsigned weDim, 
 		      const unsigned weIDDim, const unsigned maxLength);
     
     bool flagInputWeUpdate() const;
+
+
     bool saveWe(const std::string weFile) const;
     
     /* Add 04-01 Wang: for RMSE output mask */
@@ -180,7 +188,9 @@ public:
 
     /* Add 0514 Wang: initialize the output layer for MDN */
     void initOutputForMDN(const data_sets::DataSetMV &datamv);
-
+    
+    /* Add 0531 Wang: get the mdn config*/
+    Cpu::real_vector getMdnConfigVec();
 };
 
 

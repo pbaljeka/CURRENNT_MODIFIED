@@ -77,8 +77,9 @@ private:
     unsigned    m_weDim;    // dimension of the input we vector
     real_t      m_weLearningRate; // learning rate for we
     std::string m_weBank;         // path to the we data
-    std::string m_trainedParameter;  // path to the trained model, only model parameter will be read
-        
+    std::string m_trainedParameter;    // path to the trained model, only model parameter will be read
+    std::string m_trainedParameterCtr; // a control string to decide which layer should be read in
+
     /* Add 0401 Wang: for mse weight */
     std::string m_mseWeightPath;  // path to the mse weight file
 
@@ -99,10 +100,16 @@ private:
     /* Add 0504 Wang: MDN flag vector */
     std::string m_mdnFlagPath;
     real_t m_mdnSamplingPara;
+    int m_EMGenIter;
 
     /* Add 0514 Wang: data mv file*/
     std::string m_datamvPath;
-    
+
+    /* Add 0526 Wang: add variance related options for MDN*/
+    real_t m_varInitPara;
+    real_t m_vFloorPara;
+    real_t m_wInitPara;
+
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
     unsigned m_maxEpochs;
@@ -499,8 +506,13 @@ public:
     const std::string& mseWeightPath() const;
     const std::string& weightMaskPath() const;
     const std::string& trainedParameterPath() const;
+    const std::string& trainedParameterCtr() const;
     const std::string& mdnFlagPath() const;
     const std::string& datamvPath() const;
+    const int& EMIterNM() const;
+    const real_t& getVarInitPara() const;
+    const real_t& getVFloorPara() const;
+    const real_t& getWInitPara() const;
 
     bool mdnFlag() const;
     const unsigned& weIDDim() const;

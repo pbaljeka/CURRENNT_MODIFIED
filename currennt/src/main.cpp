@@ -103,12 +103,10 @@ int trainerMain(const Configuration &config)
         printf("Reading network from '%s'... ", networkFile.c_str());
         fflush(stdout);
 	
-	// Here I add two Document pointers
-	// ---- DELETE 1. netDocParameter: used to load parameters only
-	// ---- DELETE 2. netDoc: the normal pointer to file
-	// netDoc only loads the model parameters and the network structures
-	// thus, there is no need to use netDocParameter. Just specify "network" will be OK
-	// parameter can be directly add to .jsn files
+	// Modify 0302 Wang: 
+	// Add netDocPtr to select either netDocParameter or netDoc
+	// netDocParameter: pointer to network parameter (trained_network.jsn or .autosave)
+	// netDoc: the normal pointer to network.jsn
 	rapidjson::Document *netDocPtr(0);
 	rapidjson::Document netDocParameter;
         rapidjson::Document netDoc;
@@ -167,15 +165,20 @@ int trainerMain(const Configuration &config)
 	    // this inputSize will be checked against parameter set in neuralNetwork()
 	    inputSize = inputSize-1+config.weDim();
 	}
+
+	// Re-Modify 03-02
+	/* Don't need this anymore. Just directly use --network trained_network.jsn or .autosave
 	if (!config.trainedParameterPath().empty()){
 	    // just read in the network parameter (not any parameter else)
-	    // can only be used through --trainedModel
+	    // this option can only be used through --trainedModel
 	    readJsonFile(&netDocParameter, config.trainedParameterPath());
 	    netDocPtr = &netDocParameter;
 	}else{
 	    netDocPtr = &netDoc;
 	}
-        
+	*/
+	
+        netDocPtr = &netDoc;
 	NeuralNetwork<TDevice> neuralNetwork(*netDocPtr, parallelSequences, 
 					     maxSeqLength, inputSize, outputSize);
 
@@ -263,6 +266,21 @@ int trainerMain(const Configuration &config)
             }
 	    
 	    
+	    // Add 05-27: Add the function to read in the weight
+	    // Note: this part is only utilized in the training stage
+	    if (config.continueFile().empty() && !config.trainedParameterPath().empty()){
+		// Modify 05-29
+		// Note: this can not be used if .autosave is utilized. Who wants to 
+		//       use .autosave instead of a simple network.jsn ?
+		//if (config.continueFile().empty()){
+		//    printf("WARNING: Network parameter will be over-written by %s\n", 
+		//	   config.trainedParameterPath().c_str());
+		//}
+		printf("Read NN parameter from %s\n", config.trainedParameterPath().c_str());
+		readJsonFile(&netDocParameter, config.trainedParameterPath());
+		neuralNetwork.importWeights(netDocParameter, config.trainedParameterCtr());
+	    }
+
 
             // train the network
             printf("Starting training...\nPrint error per sequence / per timestep");
@@ -414,13 +432,34 @@ int trainerMain(const Configuration &config)
             Cpu::real_vector outputStdevs = feedForwardSet->outputStdevs();
             assert (outputMeans.size()  == feedForwardSet->outputPatternSize());
             assert (outputStdevs.size() == feedForwardSet->outputPatternSize());
-            //for (int i = 0; i < outputMeans.size(); ++i) 
-             //   printf("outputMeans[%d] = %f outputStdevs[%d] = %f\n", i, outputMeans[i], i, outputStdevs[i]);
+            
+	    //for (int i = 0; i < outputMeans.size(); ++i) 
+	    //   printf("outputMeans[%d] = %f outputStdevs[%d] = %f\n", i, outputMeans[i], i, outputStdevs[i]);
             bool unstandardize = config.revertStd(); 
+	    
+
 	    /* Modify 04-08, if output layer is not the last output, no standardize is required */
 	    if (unstandardize && config.outputFromWhichLayer()<0 && 
 		(config.mdnPara() < -1.0 || config.mdnPara() > 0.0)){
+		
                 printf("Outputs will be scaled by mean and std  specified in NC file.\n");
+		/* Add 05-31, Need to read in MDN config */
+		Cpu::real_vector mdnConfigVec = neuralNetwork.getMdnConfigVec();
+		if (!mdnConfigVec.empty()){
+		    // if the unit is sigmoid or softmax, set the mean and std
+		    for (int x = 0; x < (mdnConfigVec.size()-1)/5; x++){
+			int mdnType  = (int)mdnConfigVec[5+x*5];
+			if (mdnType == MDN_TYPE_SIGMOID || mdnType == MDN_TYPE_SOFTMAX){
+			    int unitSOut = (int)mdnConfigVec[3+x*5];
+			    int unitEOut = (int)mdnConfigVec[4+x*5];
+			    for (int y = unitSOut; y < unitEOut; y++){
+				outputMeans[y] = 0.0;
+				outputStdevs[y] = 1.0;
+			    }
+			    printf("Output espace de-normalization from %d to %d\n", unitSOut+1, unitEOut);
+			}
+		    }
+		}
             }
 
             int output_lag = config.outputTimeLag();
@@ -490,7 +529,8 @@ int trainerMain(const Configuration &config)
                         boost::filesystem::path seqPath(frac->seqInfo(psIdx).seqTag);
                         seqPath.replace_extension(".csv");
                         std::string filename(seqPath.filename().string());
-                        boost::filesystem::path oPath = boost::filesystem::path(config.feedForwardOutputFile()) / seqPath.relative_path().parent_path();
+                        boost::filesystem::path oPath = boost::filesystem::path(config.feedForwardOutputFile()) / 
+			    seqPath.relative_path().parent_path();
                         boost::filesystem::create_directories(oPath);
                         boost::filesystem::path filepath = oPath / filename;
                         std::ofstream file(filepath.string().c_str(), std::ofstream::out);
@@ -563,7 +603,8 @@ int trainerMain(const Configuration &config)
 			    }
                             boost::filesystem::path seqPath(frac->seqInfo(psIdx).seqTag + seqTagSuf);
                             std::string filename(seqPath.filename().string());
-                            boost::filesystem::path oPath = boost::filesystem::path(config.feedForwardOutputFile()) / seqPath.relative_path().parent_path();
+                            boost::filesystem::path oPath = boost::filesystem::path(config.feedForwardOutputFile()) / 
+				seqPath.relative_path().parent_path();
                             boost::filesystem::create_directories(oPath);
                             boost::filesystem::path filepath = oPath / filename;
                             std::ofstream file(filepath.string().c_str(), std::ofstream::out | std::ios::binary);
@@ -595,6 +636,7 @@ int trainerMain(const Configuration &config)
                                         v = (float)outputs[psIdx][timestep + output_lag][outputIdx];
                                     else
                                         v = (float)outputs[psIdx][outputs[psIdx].size() - 1][outputIdx];
+
                                     if (unstandardize && config.outputFromWhichLayer()<0 && 
 					(config.mdnPara() < -1.0 || config.mdnPara() > 0.0)) {
                                         v *= outputStdevs[outputIdx];
@@ -803,7 +845,7 @@ void printOptimizer(const Configuration &config, const optimizers::Optimizer<TDe
         printf("Learning rate:             %g\n", (double)config.learningRate());
         printf("Momentum:                  %g\n", (double)config.momentum());
 	
-	if (!config.trainedParameterPath().empty()){
+	if (config.continueFile().empty() && !config.trainedParameterPath().empty()){
 	    printf("Model Parameter:           %s\n", config.trainedParameterPath().c_str());
 	}
 	if (config.weUpdate()){
@@ -955,3 +997,4 @@ std::string printfRow(const char *format, ...)
     // return the same string
     return std::string(buffer);
 }
+
