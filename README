@@ -20,8 +20,8 @@ Other features:
 3. weighted SSE criterion
 4. ReLU for hidden node
 
-Please take a look at the CURRENNT_SCRIPTS on my github. There examples related
-to the above modification.
+Please take a look at the CURRENNT_SCRIPTS on my github. There are examples related
+to the above modification. 
 
 
 CURRENNT is written in C++/CUDA and runs on Windows and Linux. It requires a

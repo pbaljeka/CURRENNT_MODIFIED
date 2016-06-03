@@ -2,7 +2,7 @@ PROJECT(currennt)
 
 CMAKE_MINIMUM_REQUIRED (VERSION 2.8)
 
-set(BOOST_ROOT "/home/smg/wang/TOOL/bin/boost")
+#set(BOOST_ROOT "/home/smg/wang/TOOL/bin/boost")
 
 FIND_PACKAGE (CUDA)
 FIND_PACKAGE (Boost 1.48.0 REQUIRED COMPONENTS program_options system filesystem random thread  REQUIRED)
@@ -10,11 +10,11 @@ FIND_PACKAGE (Boost 1.48.0 REQUIRED COMPONENTS program_options system filesystem
 
 INCLUDE_DIRECTORIES (${Boost_INCLUDE_DIR} )
 
-LINK_DIRECTORIES (${Boost_LIBRARY_DIR} /home/smg/wang/TOOL/bin/netcdf/lib)
+LINK_DIRECTORIES (${Boost_LIBRARY_DIR})
 
 SET (CMAKE_BUILD_TYPE Release)
 SET (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}")
-SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-format-security -g")
+SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-format-security")
 
 FILE (GLOB_RECURSE src_lib     currennt_lib/*.cpp currennt_lib/*.hpp     currennt_lib/*.h     currennt_lib/*.cu     currennt_lib/*.cuh)
 FILE (GLOB_RECURSE src_trainer currennt/*.cpp     currennt/*.hpp         currennt/*.h         currennt/*.cu         currennt/*.cuh)
