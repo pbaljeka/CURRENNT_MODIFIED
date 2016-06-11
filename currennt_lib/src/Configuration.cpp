@@ -172,6 +172,7 @@ Configuration::Configuration(int argc, const char *argv[])
 	("varInitPara",         po::value(&m_varInitPara)    ->default_value(0.5, "0.5"), "Parameter to initialize the bias of MDN mixture unit (default 0.5)")
 	("vFloorPara",          po::value(&m_vFloorPara)     ->default_value(0.0001, "0.0001"), "Variance scale parameter for the variance floor (default 0.0001)")
 	("wInitPara",           po::value(&m_wInitPara)     ->default_value(1.0, "1.0"), "The weight of output layer before MDN will be initialized ~u(-para/layer*size, para/layer*size)")
+	("tieVariance",         po::value(&m_tiedVariance)  ->default_value(true,"true"), "Whether the variance should be tied across dimension for each mixture in MDN mixture unit? (default true)")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -769,3 +770,7 @@ const real_t& Configuration::getWInitPara() const
     return m_wInitPara;
 }
 
+const bool& Configuration::getTiedVariance() const
+{
+    return m_tiedVariance;
+}

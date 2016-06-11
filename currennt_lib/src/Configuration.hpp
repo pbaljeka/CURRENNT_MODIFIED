@@ -109,6 +109,8 @@ private:
     real_t m_varInitPara;
     real_t m_vFloorPara;
     real_t m_wInitPara;
+    bool   m_tiedVariance;      // tie the variance across dimension in mixture model?
+    
 
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
@@ -513,6 +515,7 @@ public:
     const real_t& getVarInitPara() const;
     const real_t& getVFloorPara() const;
     const real_t& getWInitPara() const;
+    const bool& getTiedVariance() const;
 
     bool mdnFlag() const;
     const unsigned& weIDDim() const;

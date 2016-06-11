@@ -33,16 +33,15 @@
 #include "layers/WeightedSsePostOutputLayer.hpp"
 #include "layers/BinaryClassificationLayer.hpp"
 #include "layers/MulticlassClassificationLayer.hpp"
-#include "layers/MDNLayer.hpp"
 #include "activation_functions/Tanh.cuh"
 #include "activation_functions/Logistic.cuh"
 #include "activation_functions/Identity.cuh"
 #include "activation_functions/Relu.cuh"
 
-/* Add 02-24 Wang for Residual Network*/
 #include "layers/SkipAddLayer.hpp"
 #include "layers/SkipParaLayer.hpp"
-
+#include "layers/MDNLayer.hpp"
+#include "layers/CNNLayer.hpp"
 
 #include <stdexcept>
 
@@ -72,6 +71,8 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createLayer(
     	return new LstmLayer<TDevice>(layerChild, weightsSection, *precedingLayer, false);
     else if (layerType == "blstm")
     	return new LstmLayer<TDevice>(layerChild, weightsSection, *precedingLayer, true);
+    else if (layerType == "cnn")
+	return new CNNLayer<TDevice>(layerChild, weightsSection, *precedingLayer);
     else if (layerType == "sse" || layerType == "weightedsse" || layerType == "rmse" || layerType == "ce" || layerType == "wf" || layerType == "binary_classification" || layerType == "multiclass_classification" || layerType == "mdn" ) {
         //layers::TrainableLayer<TDevice>* precedingTrainableLayer = dynamic_cast<layers::TrainableLayer<TDevice>*>(precedingLayer);
         //if (!precedingTrainableLayer)

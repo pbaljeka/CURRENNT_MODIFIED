@@ -62,6 +62,7 @@ namespace layers {
 	const int   m_paraDim;             // dimension of the parameter of this unit
 	real_vector m_paraVec;             // the parameter of current unit (after conversion)
 	real_t     *m_paraPtr;             // pointer to the parameter 
+
 	Layer<TDevice> &m_precedingLayer;  // previous output layer (output of the network)
 
 	// w.r.t the target data (target data of NN)
@@ -188,10 +189,13 @@ namespace layers {
 	real_vector m_tmpPat;
 	real_vector m_varBP;     // vector to store the variance per featuredim/mixture/time
 	real_t      m_varFloor;  // all mixture share the same variance floor
+	
+	bool        m_tieVar;    //
 
     public:
 	MDNUnit_mixture(int startDim, int endDim, int startDimOut, int endDimOut, 
-			int type, Layer<TDevice> &precedingLayer, int outputSize);
+			int type, Layer<TDevice> &precedingLayer, int outputSize,
+			const bool tieVar);
 
 	virtual ~MDNUnit_mixture();
 
@@ -220,11 +224,9 @@ namespace layers {
         3. back-propagation
         4. sampling (predict) output
 
-        MDNUnits 
-            ^
-            |
-        MDNLayer
-            ^
+                    |-  MDNUnit1
+        MDNLayer  --|-  MDNUnit2
+            ^       |-  MDNUnit3
             |
      PostOutputLayer
     ********************************************************/    
@@ -240,12 +242,17 @@ namespace layers {
 	cpu_real_vector m_mdnVec;        // the vector of mdnunit flag
 	cpu_real_vector m_mdnConfigVec;  // vector of the mdn configuration
 	real_vector m_mdnParaVec;        // vector of parameters of all MDNUnits
+	
 	// the vector of MDNUnit for computation
 	std::vector<boost::shared_ptr<MDNUnit<TDevice> > > m_mdnUnits;  
-	int m_mdnParaDim;
-	
+	int m_mdnParaDim;               // the size of MDN parameters
+	                                //  is equal to the size of NN output layer
+	                                //  (the layer before PostOutputLayer)
+	                                // this->size() is the dimension of target features
 
-
+	bool m_tieVarMDNUnit;            // whether the variance should be tied
+	                                 // across dimension for each MDNUnit mixture
+	                                 // model?
     public:
 	MDNLayer(
 		 const helpers::JsonValue &layerChild,
