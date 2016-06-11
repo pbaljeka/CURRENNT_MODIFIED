@@ -83,6 +83,39 @@ namespace layers {
 	m_outputErrorsCopy = Cpu::real_vector(this->_outputs().size(), (real_t)0);
     }
 
+    // overload for CNN
+    template <typename TDevice>
+    Layer<TDevice>::Layer(const helpers::JsonValue &layerChild, int parallelSequences, int maxSeqLength, 
+			  int outputSize, bool createOutputs)
+        : m_name             (layerChild->HasMember("name") ? (*layerChild)["name"].GetString()  : "")
+        , m_size             (outputSize)
+        , m_parallelSequences(parallelSequences)
+        , m_maxSeqLength     (maxSeqLength)
+        , m_curMaxSeqLength  (0)
+        , m_curMinSeqLength  (0)
+        , m_curNumSeqs       (0)
+	, m_InputWeUpdate    (false)
+    {
+        // check if the name and size values exist
+        if (!layerChild->HasMember("name"))
+            throw std::runtime_error("Missing value 'name' in layer description");
+        if (m_name.empty())
+            throw std::runtime_error("Empty layer name in layer description");
+        if (!layerChild->HasMember("size"))
+            throw std::runtime_error(std::string("Missing value 'size' in layer '") + m_name + "'");
+
+        // allocate space for the vectors
+        if (createOutputs)
+            m_outputs = Cpu::real_vector(m_parallelSequences * m_maxSeqLength * m_size);
+
+        m_patTypes = Cpu::pattype_vector(m_parallelSequences * m_maxSeqLength);
+	
+	
+        // resize the output errors vector
+        m_outputErrors = Cpu::real_vector(this->_outputs().size(), (real_t)0);
+	m_outputErrorsCopy = Cpu::real_vector(this->_outputs().size(), (real_t)0);
+    }
+
     template <typename TDevice>
     Layer<TDevice>::~Layer()
     {

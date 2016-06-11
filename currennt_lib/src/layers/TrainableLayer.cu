@@ -150,6 +150,107 @@ namespace layers {
         //m_outputErrors = Cpu::real_vector(this->_outputs().size(), (real_t)0);
     }
 
+    
+
+    // overload for CNN
+    template <typename TDevice>
+    TrainableLayer<TDevice>::TrainableLayer(const helpers::JsonValue &layerChild, 
+					    const helpers::JsonValue &weightsSection, 
+					    int inputWeightsPerBlock, 
+					    int internalWeightsPerBlock,
+					    int weightSize, 
+					    int outputSize,
+					    Layer<TDevice> &precedingLayer)
+        : Layer<TDevice>           (layerChild, precedingLayer.parallelSequences(), precedingLayer.maxSeqLength(), outputSize)
+        , m_precedingLayer         (precedingLayer)
+        , m_inputWeightsPerBlock   (inputWeightsPerBlock)
+        , m_internalWeightsPerBlock(internalWeightsPerBlock)
+        , m_bias                   (layerChild->HasMember("bias") ? static_cast<real_t>((*layerChild)["bias"].GetDouble()) : 0)
+        , m_learningRate           (layerChild->HasMember("learningRate") ? static_cast<real_t>((*layerChild)["learningRate"].GetDouble()) : -1)
+	, m_weightNum (-1)
+    {
+        //std::cout << "Creating layer " << this->name() << std::endl;
+        // check if the bias value exists
+        if (!layerChild->HasMember("bias"))
+            throw std::runtime_error(std::string("Missing value 'bias' in layer '") + this->name() + "'");
+
+        // extract the weights if they are given in the network file
+        Cpu::real_vector weights;
+
+        if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())) {
+            if (!weightsSection->HasMember(this->name().c_str()))
+                throw std::runtime_error(std::string("Missing weights section for layer '") + this->name() + "'");
+            const rapidjson::Value &weightsChild = (*weightsSection)[this->name().c_str()];
+            if (!weightsChild.IsObject())
+                throw std::runtime_error(std::string("Weights section for layer '") + this->name() + "' is not an object");
+
+            if (!weightsChild.HasMember("input") || !weightsChild["input"].IsArray())
+                throw std::runtime_error(std::string("Missing array 'weights/") + this->name() + "/input'");
+            if (!weightsChild.HasMember("bias") || !weightsChild["bias"].IsArray())
+                throw std::runtime_error(std::string("Missing array 'weights/") + this->name() + "/bias'");
+            if (!weightsChild.HasMember("internal") || !weightsChild["internal"].IsArray())
+                throw std::runtime_error(std::string("Missing array 'weights/") + this->name() + "/internal'");
+        
+            const rapidjson::Value &inputWeightsChild    = weightsChild["input"];
+            const rapidjson::Value &biasWeightsChild     = weightsChild["bias"];
+            const rapidjson::Value &internalWeightsChild = weightsChild["internal"];
+
+            if (inputWeightsChild.Size() != weightSize)
+                throw std::runtime_error(std::string("Invalid number of input weights for layer '") + this->name() + "'");
+            if (biasWeightsChild.Size() != 0)
+                throw std::runtime_error(std::string("Invalid number of bias weights for layer '") + this->name() + "'");
+            if (internalWeightsChild.Size() != 0)
+                throw std::runtime_error(std::string("Invalid number of internal weights for layer '") + this->name() + "'");
+
+            weights.reserve(inputWeightsChild.Size() + biasWeightsChild.Size() + internalWeightsChild.Size());
+
+            for (rapidjson::Value::ConstValueIterator it = inputWeightsChild.Begin(); it != inputWeightsChild.End(); ++it)
+                weights.push_back(static_cast<real_t>(it->GetDouble()));
+            for (rapidjson::Value::ConstValueIterator it = biasWeightsChild.Begin(); it != biasWeightsChild.End(); ++it)
+                weights.push_back(static_cast<real_t>(it->GetDouble()));
+            for (rapidjson::Value::ConstValueIterator it = internalWeightsChild.Begin(); it != internalWeightsChild.End(); ++it)
+                weights.push_back(static_cast<real_t>(it->GetDouble()));
+        }
+        // create random weights if no weights are given in the network file
+        else {
+            weights.resize(weightSize);
+
+            const Configuration &config = Configuration::instance();
+
+            static boost::mt19937 *gen = NULL;
+            if (!gen) {
+                gen = new boost::mt19937;
+                gen->seed(config.randomSeed());
+            }
+            
+            if (config.weightsDistributionType() == Configuration::DISTRIBUTION_UNIFORM) {
+                real_t range = config.weightsDistributionUniformMax() - config.weightsDistributionUniformMin();
+                boost::random::uniform_real_distribution<real_t> dist(0, range);
+                for (size_t i = 0; i < weights.size(); ++i)
+                    weights[i] = dist(*gen) + config.weightsDistributionUniformMin();
+            }else {
+                boost::random::normal_distribution<real_t> dist(config.weightsDistributionNormalMean(), config.weightsDistributionNormalSigma());
+                for (size_t i = 0; i < weights.size(); ++i)
+                    weights[i] = dist(*gen);
+            }
+        }
+
+        m_weights       = weights;
+        m_weightUpdates = weights;
+	
+	// Add 04013 Wang: for weight Mask
+	for (size_t i = 0; i < weights.size(); ++i)
+	    weights[i] = 1.0;
+	m_weightMask    = weights;          // make it the same length as weights matrix (for efficiency)
+	m_weightNum     = weights.size();   // 
+	m_weightMaskFlag= false;
+        // resize the output errors vector
+        //m_outputErrors = Cpu::real_vector(this->_outputs().size(), (real_t)0);
+    }
+
+
+
+
     template <typename TDevice>
     TrainableLayer<TDevice>::~TrainableLayer()
     {

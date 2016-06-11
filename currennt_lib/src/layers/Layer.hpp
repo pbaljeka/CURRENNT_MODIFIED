@@ -82,6 +82,10 @@ namespace layers {
          * @param createOutputs     If false, then the outputs vector will be left empty
          */
         Layer(const helpers::JsonValue &layerChild, int parallelSequences, int maxSeqLength, bool createOutputs = true);
+	
+	// overload for CNN
+	Layer(const helpers::JsonValue &layerChild, int parallelSequences, int maxSeqLength, 
+	      int outputSize, bool createOutputs = true);
 
         /**
          * Destructs the Layer
