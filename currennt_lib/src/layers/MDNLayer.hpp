@@ -74,7 +74,8 @@ namespace layers {
 	// other
 	const int   m_type;                // type of this unit
 	real_vector m_mdnOutput;           // the output of processing (sampling)
-
+	
+	real_vector m_varScale;            // the vector of coefficients to scale variance if mixture
 
     public:
 	MDNUnit(int startDim, int endDim, int startDimOut, int endDimOut, 
@@ -100,6 +101,8 @@ namespace layers {
 
 	virtual void initPreOutput(const cpu_real_vector &mVec, const cpu_real_vector &vVec) =0;
 	
+	const real_vector& varScale() const;
+
     };
 
     /********************************************************

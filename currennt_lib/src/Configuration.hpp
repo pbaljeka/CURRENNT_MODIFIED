@@ -109,8 +109,8 @@ private:
     real_t m_varInitPara;
     real_t m_vFloorPara;
     real_t m_wInitPara;
-    bool   m_tiedVariance;      // tie the variance across dimension in mixture model?
-    
+    bool   m_tiedVariance;        // tie the variance across dimension in mixture model?
+    std::string m_mdnVarScaleGen; // the vector to scale each dimension of the output
 
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
@@ -511,6 +511,8 @@ public:
     const std::string& trainedParameterCtr() const;
     const std::string& mdnFlagPath() const;
     const std::string& datamvPath() const;
+    const std::string& mdnVarScaleGen() const;
+
     const int& EMIterNM() const;
     const real_t& getVarInitPara() const;
     const real_t& getVFloorPara() const;
