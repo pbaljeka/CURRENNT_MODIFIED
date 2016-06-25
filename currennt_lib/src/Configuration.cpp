@@ -173,6 +173,7 @@ Configuration::Configuration(int argc, const char *argv[])
 	("vFloorPara",          po::value(&m_vFloorPara)     ->default_value(0.0001, "0.0001"), "Variance scale parameter for the variance floor (default 0.0001)")
 	("wInitPara",           po::value(&m_wInitPara)     ->default_value(1.0, "1.0"), "The weight of output layer before MDN will be initialized ~u(-para/layer*size, para/layer*size)")
 	("tieVariance",         po::value(&m_tiedVariance)  ->default_value(true,"true"), "Whether the variance should be tied across dimension for each mixture in MDN mixture unit? (default true)")
+	("mdn_sampleParaVec",   po::value(&m_mdnVarScaleGen)->default_value(""), "The vector of coefficients to scale the variance of the mixture model. The dimension should be the same as the MDN output (sum of all the MDN components)")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -773,4 +774,9 @@ const real_t& Configuration::getWInitPara() const
 const bool& Configuration::getTiedVariance() const
 {
     return m_tiedVariance;
+}
+
+const std::string& Configuration::mdnVarScaleGen() const
+{
+    return m_mdnVarScaleGen;
 }

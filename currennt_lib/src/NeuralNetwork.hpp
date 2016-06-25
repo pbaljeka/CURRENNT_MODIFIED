@@ -156,7 +156,7 @@ public:
      */
     std::vector<std::vector<std::vector<real_t> > > getOutputs(const int  layerID =-1, 
 							       const bool gateFromOutput=false,
-							       const real_t  mdnoutput=-1.0);
+							       const real_t  mdnoutput=-4.0);
     
     /**
      * Read in the weight from trained_network.jsn or .autosave

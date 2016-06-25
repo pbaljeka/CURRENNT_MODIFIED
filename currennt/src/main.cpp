@@ -582,7 +582,7 @@ int trainerMain(const Configuration &config)
                     std::vector<std::vector<std::vector<real_t> > > outputs = neuralNetwork.getOutputs(
 				config.outputFromWhichLayer(), 
 				config.outputFromGateLayer(),
-				config.mdnPara());
+				((config.mdnVarScaleGen().size()>0)?1.0:config.mdnPara()));
 
                     // write one output file per sequence
                     for (int psIdx = 0; psIdx < (int)outputs.size(); ++psIdx) {
