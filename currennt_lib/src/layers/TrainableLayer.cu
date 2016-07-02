@@ -50,14 +50,20 @@ namespace layers {
     }
 
     template <typename TDevice>
-    TrainableLayer<TDevice>::TrainableLayer(const helpers::JsonValue &layerChild, const helpers::JsonValue &weightsSection, 
-                                            int inputWeightsPerBlock, int internalWeightsPerBlock, Layer<TDevice> &precedingLayer)
-        : Layer<TDevice>           (layerChild, precedingLayer.parallelSequences(), precedingLayer.maxSeqLength())
+    TrainableLayer<TDevice>::TrainableLayer(const helpers::JsonValue &layerChild, 
+					    const helpers::JsonValue &weightsSection, 
+                                            int inputWeightsPerBlock, 
+					    int internalWeightsPerBlock, 
+					    Layer<TDevice> &precedingLayer)
+        : Layer<TDevice>           (layerChild, precedingLayer.parallelSequences(), 
+				    precedingLayer.maxSeqLength())
         , m_precedingLayer         (precedingLayer)
         , m_inputWeightsPerBlock   (inputWeightsPerBlock)
         , m_internalWeightsPerBlock(internalWeightsPerBlock)
-        , m_bias                   (layerChild->HasMember("bias") ? static_cast<real_t>((*layerChild)["bias"].GetDouble()) : 0)
-        , m_learningRate           (layerChild->HasMember("learningRate") ? static_cast<real_t>((*layerChild)["learningRate"].GetDouble()) : -1)
+        , m_bias                   (layerChild->HasMember("bias") ? 
+				    static_cast<real_t>((*layerChild)["bias"].GetDouble()) : 0)
+        , m_learningRate           (layerChild->HasMember("learningRate") ? 
+				    static_cast<real_t>((*layerChild)["learningRate"].GetDouble()) : -1)
 	, m_weightNum (-1)
     {
         //std::cout << "Creating layer " << this->name() << std::endl;
@@ -431,7 +437,8 @@ namespace layers {
 	// copied from the initializer of TrainableLayer
 	
 	Cpu::real_vector weights;
-	weights.resize(this->size() * (m_inputWeightsPerBlock * (m_precedingLayer.size() + 1) + m_internalWeightsPerBlock));
+	weights.resize(this->size() * (m_inputWeightsPerBlock * (m_precedingLayer.size() + 1) + 
+				       m_internalWeightsPerBlock));
 	const Configuration &config = Configuration::instance();
 	static boost::mt19937 *gen = NULL;
 	if (!gen) {
@@ -439,7 +446,8 @@ namespace layers {
 	    gen->seed(config.randomSeed());
 	}
         if (config.weightsDistributionType() == Configuration::DISTRIBUTION_UNIFORM) {
-	    real_t range = config.weightsDistributionUniformMax() - config.weightsDistributionUniformMin();
+	    real_t range = config.weightsDistributionUniformMax()-
+		config.weightsDistributionUniformMin();
 	    boost::random::uniform_real_distribution<real_t> dist(0, range);
 	    for (size_t i = 0; i < weights.size(); ++i)
 		weights[i] = dist(*gen) + config.weightsDistributionUniformMin();
@@ -467,8 +475,10 @@ namespace layers {
     
     // Add 0527: re-read the weight from weightsSection
     template <typename TDevice>
-    void TrainableLayer<TDevice>::reReadWeight(const helpers::JsonValue &weightsSection)
+    void TrainableLayer<TDevice>::reReadWeight(const helpers::JsonValue &weightsSection,
+					       const int layerSize)
     {
+
 	Cpu::real_vector weights;
 	if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())){
 	    const rapidjson::Value &weightsChild = (*weightsSection)[this->name().c_str()];
@@ -488,14 +498,14 @@ namespace layers {
             const rapidjson::Value &biasWeightsChild     = weightsChild["bias"];
             const rapidjson::Value &internalWeightsChild = weightsChild["internal"];
 
-            if (inputWeightsChild.Size() != this->size() * 
+            if (inputWeightsChild.Size() != layerSize * 
 		m_inputWeightsPerBlock * m_precedingLayer.size())
                 throw std::runtime_error(std::string("Invalid number of input weights for layer '") 
 					 + this->name() + "'");
-            if (biasWeightsChild.Size() != this->size() * m_inputWeightsPerBlock)
+            if (biasWeightsChild.Size() != layerSize * m_inputWeightsPerBlock)
                 throw std::runtime_error(std::string("Invalid number of bias weights for layer '") 
 					 + this->name() + "'");
-            if (internalWeightsChild.Size() != this->size() * m_internalWeightsPerBlock)
+            if (internalWeightsChild.Size() != layerSize * m_internalWeightsPerBlock)
                 throw std::runtime_error(std::string("Invalid number of internal for layer '") 
 					 + this->name() + "'");
 
@@ -524,6 +534,18 @@ namespace layers {
 	}
     }
     
+    template <typename TDevice>
+    int TrainableLayer<TDevice>::inputWeightsPerBlock()
+    {
+	return m_inputWeightsPerBlock;
+
+    }
+    template <typename TDevice>
+    int TrainableLayer<TDevice>::internalWeightsPerBlock()
+    {
+	return m_internalWeightsPerBlock;
+    }
+
     // explicit template instantiations
     template class TrainableLayer<Cpu>;
     template class TrainableLayer<Gpu>;

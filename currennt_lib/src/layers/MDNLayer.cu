@@ -816,8 +816,8 @@ namespace {
 	int mixtureNum;
 	int totalTime;
 	bool tieVar;
-	real_t *paraPtr;
 	real_t para;
+	real_t *paraPtr;
 	real_t *targets;
 	real_t *mdnPara;
 	
@@ -851,9 +851,10 @@ namespace {
 		(tieVar ? (flag+timeStep*mixtureNum):
 		 ((timeStep * mixtureNum + flag) * featureDim + dimStep));
 #endif	    
-	    
+
 	    pos = timeStep * layerSizeOut + startDOut + dimStep;
-	    // Modified Wang 0621:
+	    // To support variance scale for each dimension
+	    // *(targets+pos) = (*var)*para*seed + (*mean);
 	    if (paraPtr == NULL)
 		*(targets+pos) = (*var)*para*seed + (*mean);
 	    else
@@ -1121,30 +1122,27 @@ namespace layers {
 	  ...]
 	*/
 
-	// Add 0621: the vector to scale each dimension of the variace of mixture model 
-	const Configuration &config = Configuration::instance();
-	
+	// Add 0621: To read in the vector to scale each dimension of the variace of mixture model 
+	const Configuration &config = Configuration::instance();        
 	if (config.mdnVarScaleGen().size() > 0){
 	    std::ifstream ifs(config.mdnVarScaleGen().c_str(), 
 			      std::ifstream::binary | std::ifstream::in);
-	    if (!ifs.good()){
+	    if (!ifs.good())
 		throw std::runtime_error(std::string("Fail to open "+config.mdnVarScaleGen()));
-	    }
-	    
+	   
 	    std::streampos numEleS, numEleE;
 	    numEleS = ifs.tellg();
 	    ifs.seekg(0, std::ios::end);
 	    numEleE = ifs.tellg();
 	    long int tmpnumEle  = (numEleE-numEleS)/sizeof(real_t);
 	    ifs.seekg(0, std::ios::beg);
-	    
-	    if (tmpnumEle == this->m_layerSizeTar){
-		
+            
+	    if (tmpnumEle == this->m_layerSizeTar){             
 		real_t tempVal;
 		cpu_real_vector tempVec;
 		tempVec.resize(tmpnumEle, 0.0);
 		for (int i = 0; i < tmpnumEle; i++){
-		    ifs.read((char *)&tempVal, sizeof(real_t)); //
+		    ifs.read((char *)&tempVal, sizeof(real_t)); 
 		    tempVec[i] = tempVal;
 		}
 		m_varScale = tempVec;
@@ -1153,18 +1151,16 @@ namespace layers {
 		ifs.close();
 		throw std::runtime_error("Dimension unmatch: var scale vector");
 	    }
-	    
+            
 	}else{
 	    m_varScale.clear();
 	}
 
-	
     }
 
     template <typename TDevice>
     MDNUnit<TDevice>::~MDNUnit()
     {
-
     }
 
     template <typename TDevice>
@@ -1178,6 +1174,8 @@ namespace layers {
     {
 	return m_varScale;
     }
+
+    
     /********************************************************
      MDNUnit_sigmoid
     *******************************************************/
@@ -1842,7 +1840,7 @@ namespace layers {
 			     tLayer->weights().begin() +
 			     tLayer->size()* tLayer->precedingLayer().size() + 
 			     this->m_startDim);
-				
+		
 	    }
 	}else{
 	    throw std::runtime_error("MDN previous layer can not be untrainable");
@@ -2799,7 +2797,7 @@ namespace layers {
 	    std::ifstream ifs(config.mdnFlagPath().c_str(), 
 			      std::ifstream::binary | std::ifstream::in);
 	    if (!ifs.good()){
-		throw std::runtime_error(std::string("Fail to open "+config.mdnFlagPath()));
+		throw std::runtime_error(std::string("Fail to open MDNConfig: "+config.mdnFlagPath()));
 	    }
 	    std::streampos numEleS, numEleE;
 	    numEleS = ifs.tellg();
@@ -2992,7 +2990,7 @@ namespace layers {
 			printf("sampling with variance scaled by %f", para);
 		    tmpFlag =false;
 		}
-	    }
+	    }	     
 	}
 	else if (para > -1.50)
 	{
@@ -3006,7 +3004,7 @@ namespace layers {
 		mdnUnit->getParameter(helpers::getRawPointer(this->m_mdnParaVec));
 	    }
 	}
-	else // e.g. para = -2.0
+	else
 	{
 	    printf("EM-style generation\n");
 	    int i = 0;

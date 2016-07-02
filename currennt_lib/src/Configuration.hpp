@@ -72,12 +72,12 @@ private:
     bool m_revertStd;
     
     /* Add 16-02-22 Wang: for WE updating */
-    bool        m_weUpdate; // whether update the input we vector?
-    unsigned    m_weIDDim;  // we index in which dimension of input vector (base 0)
-    unsigned    m_weDim;    // dimension of the input we vector
+    bool        m_weUpdate;       // whether update the input we vector?
+    unsigned    m_weIDDim;        // we index in which dimension of input vector (base 0)
+    unsigned    m_weDim;          // dimension of the input we vector
     real_t      m_weLearningRate; // learning rate for we
     std::string m_weBank;         // path to the we data
-    std::string m_trainedParameter;    // path to the trained model, only model parameter will be read
+    std::string m_trainedParameter;    // path of the trained model, only model weights  will be read
     std::string m_trainedParameterCtr; // a control string to decide which layer should be read in
 
     /* Add 0401 Wang: for mse weight */
@@ -109,7 +109,14 @@ private:
     real_t m_varInitPara;
     real_t m_vFloorPara;
     real_t m_wInitPara;
-    bool   m_tiedVariance;        // tie the variance across dimension in mixture model?
+    bool   m_tiedVariance;      // tie the variance across dimension in mixture model?
+    
+    /* Add 0620 Wang: add LstmCharW*/
+    std::string m_chaBankPath;    // path to the binary data of txt character bank
+    unsigned m_chaDimLstmCharW;   // the size of the txt character bag
+    
+    /* Add 0602 Other options */
+    std::string m_printWeightPath;
     std::string m_mdnVarScaleGen; // the vector to scale each dimension of the output
 
     unsigned m_truncSeqLength;
@@ -185,6 +192,7 @@ public:
      */
     bool trainingMode() const;
 
+    const std::string& printWeightPath() const;
     /**
      * Returns true if hybrid online/batch learning is enabled
      *
@@ -505,33 +513,56 @@ public:
     bool weUpdate() const;
 
     const std::string& weBankPath() const;
+    
     const std::string& mseWeightPath() const;
+
     const std::string& weightMaskPath() const;
+    
     const std::string& trainedParameterPath() const;
+    
     const std::string& trainedParameterCtr() const;
+    
     const std::string& mdnFlagPath() const;
+
     const std::string& datamvPath() const;
+
     const std::string& mdnVarScaleGen() const;
 
     const int& EMIterNM() const;
-    const real_t& getVarInitPara() const;
-    const real_t& getVFloorPara() const;
-    const real_t& getWInitPara() const;
-    const bool& getTiedVariance() const;
 
+    const real_t& getVarInitPara() const;
+
+    const real_t& getVFloorPara() const;
+
+    const real_t& getWInitPara() const;
+
+    const bool& getTiedVariance() const;
+    
     bool mdnFlag() const;
+
     const unsigned& weIDDim() const;
     
     const unsigned& weDim() const;
     
+    const unsigned& txtChaDim() const;
+
+    const std::string& chaBankPath() const;
+    
     real_t weLearningRate() const;
+
     const real_t& highwayGateBias() const;
+
     const real_t& mdnPara() const;
     
     const int& outputFromWhichLayer() const;
+
     const bool& outputFromGateLayer() const;
+
     const int& lrDecayEpoch() const;
+
     const real_t& lrDecayRate() const;
+
+    
 };
 
 

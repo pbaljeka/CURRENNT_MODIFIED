@@ -46,6 +46,8 @@ namespace optimizers {
 
         boost::shared_ptr<data_sets::DataSetFraction> frac;
         bool firstFraction = true;
+	int uttNum = ds.totalSequences();
+	int uttCnt = 0;
         while ((frac = ds.getNextFraction())) {
             // compute forward pass and calculate the error
             m_neuralNetwork.loadSequences(*frac);
@@ -123,6 +125,8 @@ namespace optimizers {
             }
 
             firstFraction = false;
+	    //std::cerr << uttCnt << "/" << uttNum <<std::endl;
+	    uttCnt += frac->numSequences();
         }
 
         // update weights for batch learning

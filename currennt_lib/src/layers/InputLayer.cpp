@@ -60,32 +60,39 @@ namespace layers {
 		throw std::runtime_error("input data pattern -1 + weDim != networkinput");
 	    }
 	}else if (fraction.inputPatternSize() != this->size()) {
-            throw std::runtime_error(std::string("Input layer size of ") + boost::lexical_cast<std::string>(this->size())
-            + " != data input pattern size of " + boost::lexical_cast<std::string>(fraction.inputPatternSize()));
+            throw std::runtime_error(std::string("Input layer size of ") + 
+				     boost::lexical_cast<std::string>(this->size()) + 
+				     " != data input pattern size of " + 
+				     boost::lexical_cast<std::string>(fraction.inputPatternSize()));
         }
 
         Layer<TDevice>::loadSequences(fraction);
 	
 	/* Add 16-02-22 Wang: for WE updating */
-	// thrust::copy(fraction.inputs().begin(), fraction.inputs().end(), this->_outputs().begin());
+	// thrust::copy(fraction.inputs().begin(),fraction.inputs().end(),this->_outputs().begin());
+	
 	if (m_flagWeUpdate){
 	    
 	    // load in the embedded vectors from weBank
 	    int weidx=0;
 	    long unsigned int bias=0;
 	    long unsigned int fracTime=(fraction.inputs().size()/fraction.inputPatternSize());
+	    
 	    if (fracTime>m_weIdx.size()){
 		throw std::runtime_error("m_weIdx size is smaller than fracTime\n");
 	    }
 	    thrust::fill(m_weIdx.begin(), m_weIdx.end(), -1);
 	    for (int i=0; i<fracTime; i++){
 		bias = i*fraction.inputPatternSize();
+		
 		// copy the original input data
 		thrust::copy(fraction.inputs().begin()+bias, 
 			     fraction.inputs().begin()+bias+fraction.inputPatternSize(), 
 			     this->_outputs().begin()+i*this->size());
+		
 		// retrieve the embedded vector idx and save m_weIdx
-		weidx = (long unsigned int)(fraction.inputs()[i*fraction.inputPatternSize()+m_weIDDim]);
+		weidx = (long unsigned int)(fraction.inputs()[i * fraction.inputPatternSize() + 
+							      m_weIDDim]);
 		if (weidx*m_weDim>m_weBank.size()){
 		    printf("Vector idx: %d\t", weidx);
 		    throw std::runtime_error("vector idx larger than weBank size");
@@ -94,8 +101,10 @@ namespace layers {
 		m_weIdx[i]=weidx;
 		
 		// copy the we data into the input data (output of the InputLayer)
-		thrust::copy(m_weBank.begin()+weidx*m_weDim, m_weBank.begin()+(weidx+1)*m_weDim, 
-			     this->_outputs().begin()+i*this->size()+fraction.inputPatternSize()-1);
+		thrust::copy(m_weBank.begin() + weidx     * m_weDim, 
+			     m_weBank.begin() + (weidx+1) * m_weDim, 
+			     this->_outputs().begin() + i * this->size() + 
+			     fraction.inputPatternSize()  - 1);
 	    }
 	    // for debugging
 	    if (0){
@@ -103,8 +112,8 @@ namespace layers {
 		std::cout << tempVec.size() << std::endl;
 	    }
 	}else
-	    // if no we is utilized
-	    thrust::copy(fraction.inputs().begin(), fraction.inputs().end(), this->_outputs().begin());
+	    // if no we is utilized, just copy the input
+	    thrust::copy(fraction.inputs().begin(),fraction.inputs().end(),this->_outputs().begin());
     }
 
     template <typename TDevice>
@@ -141,7 +150,9 @@ namespace layers {
     
     // read the we data into m_weBank
     template <typename TDevice>
-    bool InputLayer<TDevice>::readWeBank(const std::string weBankPath, const unsigned dim, const unsigned dimidx, const unsigned maxLength)
+    bool InputLayer<TDevice>::readWeBank(const std::string weBankPath, 
+					 const unsigned dim, const unsigned dimidx, 
+					 const unsigned maxLength)
     {
 	// 
 	if (dim < 1){
@@ -156,7 +167,9 @@ namespace layers {
 	m_weDim                 = dim;
 	m_flagWeUpdate          = true;
 	m_weIDDim               = dimidx;
-	this->_setInputWeUpdate(true); // this is a input layer with we to be updated. Used in computeBackward()
+	
+	// set the flag for We input
+	this->_setInputWeUpdate(true);  
 	
 	// get the number of we data
 	std::streampos numEleS, numEleE;

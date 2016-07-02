@@ -54,6 +54,10 @@ namespace data_sets {
 
             std::streampos inputsBegin;
             std::streampos targetsBegin;
+	    
+	    // Add 0620, Wang: support to the txt int data
+	    int         txtLength;        // length of the txt data for this sequence
+	    std::streampos txtDataBegin;  // 
         };
 
     private:
@@ -66,7 +70,10 @@ namespace data_sets {
         Cpu::int_vector _loadTargetClassesFromCache(const sequence_t &seq);
         boost::shared_ptr<DataSetFraction> _makeFractionTask(int firstSeqIdx);
         boost::shared_ptr<DataSetFraction> _makeFirstFractionTask();
-
+	
+	// Add 0620: Wang support to the txt input data
+	Cpu::real_vector _loadTxtDataFromCache(const sequence_t &seq);
+	
     private:
         bool   m_fractionShuffling;
         bool   m_sequenceShuffling;
@@ -89,8 +96,14 @@ namespace data_sets {
         std::vector<sequence_t> m_sequences;
 
         boost::scoped_ptr<thread_data_t> m_threadData; // just because nvcc hates boost headers
-        int m_curFirstSeqIdx;
-
+        int    m_curFirstSeqIdx;
+	
+	// Add 0620: Wang support to the txt input data
+	int    m_maxTxtLength;                 // the maximum length of txt over corpus
+	int    m_txtDataPatternSize;           // dimension of the txt data 
+	int    m_totalTxtLength;               // the total length of txt data for this fraction
+	bool   m_hasTxtData;                   // whether contains the txt data?
+	
     public:
         /**
          * Creates an empty data set
@@ -210,7 +223,13 @@ namespace data_sets {
          * @return vector of output standard deviations
          */
         Cpu::real_vector outputStdevs() const;
-
+	
+	/**
+	 * Returns the maximum length of txt data in the corpus
+	 *
+	 */
+	int maxTxtLength() const;
+	
     };
     
     

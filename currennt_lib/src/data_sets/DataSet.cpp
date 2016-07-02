@@ -87,9 +87,10 @@ namespace internal {
         size_t count[] = {1};
 
         int x;
-        if ((ret = nc_inq_varid(ncid, arrName, &varid)) || (ret = nc_get_vara_int(ncid, varid, start, count, &x)))
-            throw std::runtime_error(std::string("Cannot read array '") + arrName + "': " + nc_strerror(ret));
-
+        if ((ret = nc_inq_varid(ncid, arrName, &varid)) || 
+	    (ret = nc_get_vara_int(ncid, varid, start, count, &x)))
+            throw std::runtime_error(std::string("Cannot read array '") + 
+				     arrName + "': " + nc_strerror(ret));
         return x;
     }
 
@@ -140,6 +141,20 @@ namespace internal {
 
         Cpu::real_vector v(n * patternSize);
         if ((ret = nc_inq_varid(ncid, arrName, &varid)) || (ret = _readNcArrayHelper<real_t>(ncid, varid, start, count, v.data())))
+            throw std::runtime_error(std::string("Cannot read array '") + arrName + "': " + nc_strerror(ret));
+
+        return v;
+    }
+
+    Cpu::int_vector readNcPatternArrayInt(int ncid, const char *arrName, int begin, int n, int patternSize)
+    {
+        int ret;
+        int varid;
+        size_t start[] = {begin, 0};
+        size_t count[] = {n, patternSize};
+
+        Cpu::int_vector v(n * patternSize);
+        if ((ret = nc_inq_varid(ncid, arrName, &varid)) || (ret = _readNcArrayHelper<int>(ncid, varid, start, count, v.data())))
             throw std::runtime_error(std::string("Cannot read array '") + arrName + "': " + nc_strerror(ret));
 
         return v;
@@ -298,6 +313,17 @@ namespace data_sets {
 
         return v;
     }
+    
+    Cpu::real_vector DataSet::_loadTxtDataFromCache(const sequence_t &seq)
+    {
+        Cpu::int_vector v(seq.txtLength * m_txtDataPatternSize);
+
+        m_cacheFile.seekg(seq.txtDataBegin);
+        m_cacheFile.read((char*)v.data(), sizeof(int) * v.size());
+        assert (m_cacheFile.tellg() - seq.txtDataBegin == v.size() * sizeof(int));
+
+        return v;
+    }
 
     boost::shared_ptr<DataSetFraction> DataSet::_makeFractionTask(int firstSeqIdx)
     {
@@ -312,6 +338,11 @@ namespace data_sets {
         frac->m_outputPatternSize = m_outputPatternSize;
         frac->m_maxSeqLength      = std::numeric_limits<int>::min();
         frac->m_minSeqLength      = std::numeric_limits<int>::max();
+	
+	// Add 0620: Wang 
+	frac->m_maxTxtLength      = std::numeric_limits<int>::min();
+	frac->m_txtPatternSize    = m_hasTxtData ? m_txtDataPatternSize : 0;
+	
 
         // fill fraction sequence info
         for (int seqIdx = firstSeqIdx; seqIdx < firstSeqIdx + m_parallelSequences; ++seqIdx) {
@@ -324,13 +355,24 @@ namespace data_sets {
                 seqInfo.length         = m_sequences[seqIdx].length;
                 seqInfo.seqTag         = m_sequences[seqIdx].seqTag;
 
+		frac->m_maxTxtLength   = m_hasTxtData ?
+		    std::max(frac->m_maxTxtLength, m_sequences[seqIdx].txtLength) : 
+		    frac->m_maxTxtLength;    
+		seqInfo.txtLength      = m_hasTxtData ? (m_sequences[seqIdx].txtLength) : 0;
+		
                 frac->m_seqInfo.push_back(seqInfo);
             }
         }
 
         // allocate memory for the fraction
-        frac->m_inputs  .resize(frac->m_maxSeqLength * m_parallelSequences * frac->m_inputPatternSize, 0);
-        frac->m_patTypes.resize(frac->m_maxSeqLength * m_parallelSequences, PATTYPE_NONE);
+        frac->m_inputs.resize  (frac->m_maxSeqLength*m_parallelSequences*frac->m_inputPatternSize,0);
+        frac->m_patTypes.resize(frac->m_maxSeqLength*m_parallelSequences,PATTYPE_NONE);
+	
+	// Add 0620 Wang
+	if (m_hasTxtData)
+	   frac->m_txtData.resize(frac->m_maxTxtLength*m_parallelSequences*frac->m_txtPatternSize,0);
+	else
+	   frac->m_txtData.clear();
 
         if (m_isClassificationData)
             frac->m_targetClasses.resize(frac->m_maxSeqLength * m_parallelSequences, -1);
@@ -347,6 +389,7 @@ namespace data_sets {
             // inputs
             Cpu::real_vector inputs = _loadInputsFromCache(seq);
             _addNoise(&inputs);
+	    
             for (int timestep = 0; timestep < seq.length; ++timestep) {
                 int srcStart = m_inputPatternSize * timestep;
                 int offset_out = 0;
@@ -358,14 +401,18 @@ namespace data_sets {
                     // duplicate last time step if needed
                     else if (srcStart > m_inputPatternSize * (seq.length - 1))
                         srcStart = m_inputPatternSize * (seq.length - 1);
-                    int tgtStart = frac->m_inputPatternSize * (timestep * m_parallelSequences + i) + offset_out * m_inputPatternSize;
-                    //std::cout << "copy from " << srcStart << " to " << tgtStart << " size " << m_inputPatternSize << std::endl;
-                    thrust::copy_n(inputs.begin() + srcStart, m_inputPatternSize, frac->m_inputs.begin() + tgtStart);
+                    int tgtStart = frac->m_inputPatternSize * (timestep * m_parallelSequences + i) +
+			offset_out * m_inputPatternSize;
+                    //std::cout << "copy from " << srcStart << " to " << tgtStart 
+		    // << " size " << m_inputPatternSize << std::endl;
+                    thrust::copy_n(inputs.begin() + srcStart, m_inputPatternSize, 
+				   frac->m_inputs.begin() + tgtStart);
                     ++offset_out;
                 }
             }
             /*std::cout << "original inputs: ";
-            thrust::copy(inputs.begin(), inputs.end(), std::ostream_iterator<real_t>(std::cout, ";"));
+            thrust::copy(inputs.begin(), inputs.end(), 
+	    std::ostream_iterator<real_t>(std::cout, ";"));
             std::cout << std::endl;*/
 
             // target classes
@@ -382,18 +429,31 @@ namespace data_sets {
             else {
                 Cpu::real_vector outputs = _loadOutputsFromCache(seq);
                 for (int timestep = 0; timestep < seq.length; ++timestep) {
-                    int tgtStart = m_outputPatternSize * (timestep * m_parallelSequences + i);
+                    int tgtStart  = m_outputPatternSize * (timestep * m_parallelSequences + i);
                     if (timestep >= output_lag) {
                         int srcStart = m_outputPatternSize * (timestep - output_lag);
-                        thrust::copy_n(outputs.begin() + srcStart, m_outputPatternSize, frac->m_outputs.begin() + tgtStart);
+                        thrust::copy_n(outputs.begin() + srcStart, m_outputPatternSize, 
+				       frac->m_outputs.begin() + tgtStart);
                     }
                     else {
                         for (int oi = 0; oi < m_outputPatternSize; ++oi) {
-                            frac->m_outputs[tgtStart + oi] = 1.0f; // default value (make configurable?)
+                            frac->m_outputs[tgtStart + oi] = 1.0f; 
+			    // default value (make configurable?)
                         }
                     }
                 }
             }
+	    
+	    // Add Wang 0620: Wang read in the txtData into fraction
+	    if (m_hasTxtData){
+		Cpu::int_vector txtData = _loadTxtDataFromCache(seq);
+		for (int txtstep = 0; txtstep < seq.txtLength; txtstep++){
+		     int txtStart = m_txtDataPatternSize * (txtstep * m_parallelSequences + i);
+		     int srcStart = m_txtDataPatternSize * (txtstep);
+		    thrust::copy_n(txtData.begin() + srcStart, m_txtDataPatternSize,
+				   frac->m_txtData.begin() + txtStart);
+		}
+	    }
 
             // pattern types
             for (int timestep = 0; timestep < seq.length; ++timestep) {
@@ -409,7 +469,8 @@ namespace data_sets {
             }
         }
         /*std::cout << "inputs for data fraction: ";
-        thrust::copy(frac->m_inputs.begin(), frac->m_inputs.end(), std::ostream_iterator<real_t>(std::cout, ";"));
+        thrust::copy(frac->m_inputs.begin(), frac->m_inputs.end(), 
+	std::ostream_iterator<real_t>(std::cout, ";"));
         std::cout << std::endl;*/
 
         return frac;
@@ -439,6 +500,9 @@ namespace data_sets {
         , m_inputPatternSize (0)
         , m_outputPatternSize(0)
         , m_curFirstSeqIdx   (-1)
+	, m_totalTxtLength   (0)
+	, m_maxTxtLength     (0)
+	, m_txtDataPatternSize(0)
     {
     }
 
@@ -451,6 +515,8 @@ namespace data_sets {
         , m_minSeqLength     (std::numeric_limits<int>::max())
         , m_maxSeqLength     (std::numeric_limits<int>::min())
         , m_curFirstSeqIdx   (-1)
+	, m_totalTxtLength   (0)
+	, m_maxTxtLength     (0)
     {
         int ret;
         int ncid;
@@ -477,7 +543,7 @@ namespace data_sets {
 				     tmpFileName + "'");
 
         bool first_file = true;
-
+	
         // read the *.nc files
         for (std::vector<std::string>::const_iterator nc_itr = ncfiles.begin();
             nc_itr != ncfiles.end(); ++nc_itr) 
@@ -494,7 +560,7 @@ namespace data_sets {
                 if (first_file) {
                     m_isClassificationData = internal::hasNcDimension (ncid, "numLabels");
                     m_inputPatternSize     = internal::readNcDimension(ncid, "inputPattSize");
-
+		    
                     if (m_isClassificationData) {
                         int numLabels       = internal::readNcDimension(ncid, "numLabels");
                         m_outputPatternSize = (numLabels == 2 ? 1 : numLabels);
@@ -502,6 +568,19 @@ namespace data_sets {
                     else {
                         m_outputPatternSize = internal::readNcDimension(ncid, "targetPattSize");
                     }
+
+		    // Add Wang 0620: check the txt data
+		    m_hasTxtData            = internal::hasNcDimension (ncid, "txtLength");
+		    if (m_hasTxtData){
+			m_txtDataPatternSize = internal::readNcDimension(ncid, "txtPattSize");
+			if (m_txtDataPatternSize != 1)
+			    throw std::runtime_error("Only support txtPattSize=1, in .nc files");
+			if (truncSeqLength > 0){
+			    printf("WARNING:truncSeqLength will be set to -1 in LstmCharW mode");
+			    truncSeqLength = -1;
+			}
+		    }
+
                 }
                 else {
                     if (m_isClassificationData) {
@@ -512,11 +591,19 @@ namespace data_sets {
                             throw std::runtime_error("Number of classes mismatch in NC files");
                     }
                     else {
-                        if (m_outputPatternSize != internal::readNcDimension(ncid, "targetPattSize"))
+                        if (m_outputPatternSize != internal::readNcDimension(ncid,"targetPattSize"))
                             throw std::runtime_error("Number of targets mismatch in NC files");
                     }
                     if (m_inputPatternSize != internal::readNcDimension(ncid, "inputPattSize"))
                         throw std::runtime_error("Number of inputs mismatch in NC files");
+
+		    
+		    // Add Wang 0620: check the txt data
+		    if (m_hasTxtData &&
+			m_txtDataPatternSize != internal::readNcDimension(ncid, "txtPattSize")){
+			throw std::runtime_error("txtPattSize mismatch");
+		    }
+
                 }
                 
                 int nSeq = internal::readNcDimension(ncid, "numSeqs");
@@ -525,9 +612,15 @@ namespace data_sets {
 
                 int inputsBegin  = 0;
                 int targetsBegin = 0;
+		int txtDataBegin = 0;
+
                 for (int i = 0; i < nSeq; ++i) {
                     int seqLength = internal::readNcIntArray(ncid, "seqLengths", i);
                     m_totalTimesteps += seqLength;
+		    
+		    // Add Wang 0620: check the txt data
+		    int txtLength = m_hasTxtData?(internal::readNcIntArray(ncid,"txtLengths",i)) : 0;
+		    m_totalTxtLength += txtLength;
 
                     std::string seqTag = internal::readNcStringArray(ncid, "seqTags", i, 
 								     maxSeqTagLength);
@@ -543,7 +636,9 @@ namespace data_sets {
                             seq.length = seqLength;
                         // TODO append index k
                         seq.seqTag         = seqTag; 
-                        
+			
+			seq.txtLength      = txtLength;
+			
                         sequences.push_back(seq);
                         seqLength -= seq.length;
                         ++k;
@@ -555,34 +650,65 @@ namespace data_sets {
 		     ++seq) {
                     m_minSeqLength = std::min(m_minSeqLength, seq->length);
                     m_maxSeqLength = std::max(m_maxSeqLength, seq->length);
+		    
+		    // Add 0620
+		    m_maxTxtLength = std::max(m_maxTxtLength, seq->txtLength);
 
                     // read input patterns and store them in the cache file
                     seq->inputsBegin = m_cacheFile.tellp();
-                    Cpu::real_vector inputs = internal::readNcPatternArray(
-			    ncid, "inputs", inputsBegin, seq->length, m_inputPatternSize);
+                    Cpu::real_vector inputs = 
+			internal::readNcPatternArray(ncid, "inputs", inputsBegin, 
+						     seq->length, m_inputPatternSize);
+		    
                     m_cacheFile.write((const char*)inputs.data(), sizeof(real_t) * inputs.size());
+		    
                     assert (m_cacheFile.tellp() - seq->inputsBegin == 
 			    seq->length * m_inputPatternSize * sizeof(real_t));
 
                     // read targets and store them in the cache file
                     seq->targetsBegin = m_cacheFile.tellp();
                     if (m_isClassificationData) {
-                        Cpu::int_vector targets = internal::readNcArray<int>(
-                            ncid, "targetClasses", targetsBegin, seq->length);
-                        m_cacheFile.write((const char*)targets.data(), sizeof(int) * targets.size());
+                        Cpu::int_vector targets = 
+			    internal::readNcArray<int>(ncid, "targetClasses", 
+						       targetsBegin, seq->length);
+
+                        m_cacheFile.write((const char*)targets.data(), sizeof(int)*targets.size());
+			
                         assert (m_cacheFile.tellp()-seq->targetsBegin == seq->length * sizeof(int));
+			
                     }
                     else {
-                        Cpu::real_vector targets = internal::readNcPatternArray(
-                            ncid, "targetPatterns", targetsBegin, seq->length, m_outputPatternSize);
+                        Cpu::real_vector targets = 
+			    internal::readNcPatternArray(ncid, "targetPatterns", targetsBegin, 
+							 seq->length, m_outputPatternSize);
+
                         m_cacheFile.write((const char*)targets.data(), 
 					  sizeof(real_t) * targets.size());
+			
                         assert (m_cacheFile.tellp() - seq->targetsBegin == 
 				seq->length * m_outputPatternSize * sizeof(real_t));
                     }
-
+		    
+		    // Add 0620 Wang: read and store the txt data
+		    if (m_hasTxtData){
+			seq->txtDataBegin = m_cacheFile.tellp();
+			Cpu::int_vector txtData = 
+			    internal::readNcPatternArrayInt(ncid, "txtData", txtDataBegin, 
+							    seq->txtLength,  m_txtDataPatternSize);
+			
+			m_cacheFile.write((const char *)txtData.data(),
+					  sizeof(int) * txtData.size());
+			
+			assert (m_cacheFile.tellp() - seq->txtDataBegom == 
+				seq->txtLength * m_txtDataPatternSize * sizeof(int));
+		    }else{
+			seq->txtDataBegin = 0;
+		    }
+		    
+		    
                     inputsBegin  += seq->length;
                     targetsBegin += seq->length;
+		    txtDataBegin += seq->txtLength;
                 }
 
                 if (first_file) {
@@ -671,9 +797,9 @@ namespace data_sets {
 
             // start new task
             if (m_curFirstSeqIdx < (int)m_sequences.size())
-                m_threadData->taskFn = boost::bind(&DataSet::_makeFractionTask, this, m_curFirstSeqIdx);
+                m_threadData->taskFn=boost::bind(&DataSet::_makeFractionTask,this,m_curFirstSeqIdx);
             else
-                m_threadData->taskFn = boost::bind(&DataSet::_makeFirstFractionTask, this);
+                m_threadData->taskFn=boost::bind(&DataSet::_makeFirstFractionTask,this);
 
             m_threadData->finished = false;
             m_threadData->cv.notify_one();
@@ -703,6 +829,11 @@ namespace data_sets {
     int DataSet::maxSeqLength() const
     {
         return m_maxSeqLength;
+    }
+
+    int DataSet::maxTxtLength() const
+    {
+	return m_maxTxtLength;
     }
 
     int DataSet::inputPatternSize() const
@@ -770,10 +901,14 @@ namespace data_sets {
 	    m_outputPatternSize = internal::readNcDimension(ncid, "targetPattSize");
 	    
 	    // read the mean and variance
-	    m_inputMeans  = internal::readNcArray<real_t>(ncid,"inputMeans",  0, m_inputPatternSize);
-	    m_inputStdevs = internal::readNcArray<real_t>(ncid,"inputStdevs", 0, m_inputPatternSize);
-	    m_outputMeans = internal::readNcArray<real_t>(ncid,"outputMeans", 0, m_outputPatternSize);
-	    m_outputStdevs= internal::readNcArray<real_t>(ncid,"outputStdevs",0, m_outputPatternSize);
+	    m_inputMeans  = internal::readNcArray<real_t>(ncid,"inputMeans",  
+							  0, m_inputPatternSize);
+	    m_inputStdevs = internal::readNcArray<real_t>(ncid,"inputStdevs", 
+							  0, m_inputPatternSize);
+	    m_outputMeans = internal::readNcArray<real_t>(ncid,"outputMeans", 
+							  0, m_outputPatternSize);
+	    m_outputStdevs= internal::readNcArray<real_t>(ncid,"outputStdevs",
+							  0, m_outputPatternSize);
 	    
 	    
 	}catch (const std::exception&){
