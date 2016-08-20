@@ -130,22 +130,18 @@ Configuration::Configuration(int argc, const char *argv[])
 
     po::options_description feedForwardOptions("Forward pass options");
     feedForwardOptions.add_options()
-        ("ff_output_format", po::value(&feedForwardFormatString)->default_value("single_csv"),  "output format for output layer activations (htk, csv or single_csv)")
+        ("ff_output_format", po::value(&feedForwardFormatString)->default_value("single_csv"), "output format for output layer activations (htk, csv or single_csv)")
         ("ff_output_file", po::value(&m_feedForwardOutputFile)->default_value("ff_output.csv"), "sets the name of the output file / directory in forward pass mode (directory for htk / csv modes)")
-        ("ff_output_kind", po::value(&m_outputFeatureKind)->default_value(9),                   "sets the parameter kind in case of HTK output (9: user, consult HTK book for details)")
-        ("feature_period", po::value(&m_featurePeriod)->default_value(10),                      "sets the feature period in case of HTK output (in seconds)")
-        ("ff_input_file",  po::value(&feedForwardInputFileList),                                "sets the name(s) of the input file(s) in forward pass mode")
-        ("revert_std",     po::value(&m_revertStd)->default_value(true),                        "for regression task, de-normalize the generated data using mean and variance in data.nc")
-	/* Add 16-04-08 to tap in the output of arbitary layer */
-	("output_from",    po::value(&m_outputTapLayer)->default_value(-1),                     "from which layer to get the output ? (input layer is 0. Default from the output layer) ")
-	("output_from_gate",po::value(&m_outputGateOut)->default_value(false),                  "if the output layer is a gate layer, get output from gate instead of transformation units? (default false)")
+        ("ff_output_kind", po::value(&m_outputFeatureKind)->default_value(9), "sets the parameter kind in case of HTK output (9: user, consult HTK book for details)")
+        ("feature_period", po::value(&m_featurePeriod)->default_value(10), "sets the feature period in case of HTK output (in seconds)")
+        ("ff_input_file",  po::value(&feedForwardInputFileList),                                  "sets the name(s) of the input file(s) in forward pass mode")
+        ("revert_std",     po::value(&m_revertStd)->default_value(true), "if regression is performed, unstandardize the output activations so that features are on the original targets' scale")
         ;
 
     po::options_description trainingOptions("Training options");
     trainingOptions.add_options()
         ("train",               po::value(&m_trainingMode)     ->default_value(false),                 "enables the training mode")
-	("print_weight_to",        po::value(&m_printWeightPath)  ->default_value(""),                 "print the weight to binary file")
-        ("stochastic", po::value(&m_hybridOnlineBatch)->default_value(false),                          "enables weight updates after every mini-batch of parallel calculated sequences")
+        ("stochastic", po::value(&m_hybridOnlineBatch)->default_value(false),                 "enables weight updates after every mini-batch of parallel calculated sequences")
         ("hybrid_online_batch", po::value(&m_hybridOnlineBatch)->default_value(false),                 "same as --stochastic (for compatibility)")
         ("shuffle_fractions",   po::value(&m_shuffleFractions) ->default_value(false),                 "shuffles mini-batches in stochastic gradient descent")
         ("shuffle_sequences",   po::value(&m_shuffleSequences) ->default_value(false),                 "shuffles sequences within and across mini-batches")
@@ -156,28 +152,11 @@ Configuration::Configuration(int argc, const char *argv[])
         ("optimizer",           po::value(&optimizerString)    ->default_value("steepest_descent"),    "sets the optimizer used for updating the weights")
         ("learning_rate",       po::value(&m_learningRate)     ->default_value((real_t)1e-5, "1e-5"),  "sets the learning rate for the steepest descent optimizer")
         ("momentum",            po::value(&m_momentum)         ->default_value((real_t)0.9,  "0.9"),   "sets the momentum for the steepest descent optimizer")
-        ("weight_noise_sigma",  po::value(&m_weightNoiseSigma)  ->default_value((real_t)0),            "sets the standard deviation of the weight noise added for the gradient calculation on every batch")
+        ("weight_noise_sigma",  po::value(&m_weightNoiseSigma)  ->default_value((real_t)0), "sets the standard deviation of the weight noise added for the gradient calculation on every batch")
         ("save_network",        po::value(&m_trainedNetwork)   ->default_value("trained_network.jsn"), "sets the file name of the trained network that will be produced")
 	/* Add 16-02-22 Wang: for WE updating */
-	("welearning_rate",     po::value(&m_weLearningRate) ->default_value((real_t)-1, "0"),         "sets the learning rate for we.")
-	("mseWeight",           po::value(&m_mseWeightPath)  ->default_value(""),                      "path to the weight for calculating the SSE and back-propagation (binary float data)")
-	("lr_decay_rate",       po::value(&m_lr_decay_rate)  ->default_value(0.1),                     "the rate to decay learning rate (0.1)")
-	("lr_decay_epoch",      po::value(&m_lr_decay_epoch) ->default_value(-1),                      "ffter how many no-best epochs should the lr be decayed (-1, no use)")
-	/* Add 04-13 Wang: for weight mask*/
-	("weight_mask",         po::value(&m_weightMaskPath) ->default_value(""),                      "path to the network transformation matrix mask. The size of the file is identitcal to total number of parameters of the network (binary float data)")
-	
-	/* Add 0504 Wang: for MDN flag*/
-	("mdn_config",          po::value(&m_mdnFlagPath)    ->default_value(""),                      "path to the MDN flag. ")
-	("mdn_samplePara",      po::value(&m_mdnSamplingPara)->default_value((real_t)-4.0, "-4.0"),    "parameter for MDN sampling. mdn_samplePara > 0: sampling output from the distribution with the variance multiplied by mdn_samplePara. mdn_samplePara: -1.0, generate the parameter of the distribution. mdn_samplePara < -1.0: not use mdn and mdn generation.")
-	("mdn_EMGenIter",       po::value(&m_EMGenIter)      ->default_value(5, "5"),                  "Number of iterations for EM generation in MDN (default 5). Iteration 1 is only initialization")
-	("varInitPara",         po::value(&m_varInitPara)    ->default_value(0.5, "0.5"), "Parameter to initialize the bias of MDN mixture unit (default 0.5)")
-	("vFloorPara",          po::value(&m_vFloorPara)     ->default_value(0.0001, "0.0001"), "Variance scale parameter for the variance floor (default 0.0001)")
-	("wInitPara",           po::value(&m_wInitPara)     ->default_value(1.0, "1.0"), "The weight of output layer before MDN will be initialized ~u(-para/layer*size, para/layer*size)")
-	("tieVariance",         po::value(&m_tiedVariance)  ->default_value(true,"true"), "Whether the variance should be tied across dimension for each mixture in MDN mixture unit? (default true)")
-	("mdn_sampleParaVec",   po::value(&m_mdnVarScaleGen)->default_value(""), "The binary vector of coefficients to scale each dimension of the variance of the mixture model. Dimension of the vector should be equal to the dimension of the target feature vector.")
-	("mdnDyn",            po::value(&m_mdnDyn) ->default_value(""), "Whether utilizes the dynamic output mdn. A string of 1/0, whose length is equal to the number of MDNUnits")
-	("tanhAutoReg",       po::value(&m_tanhAutoregressive) ->default_value(0), "Whether utilizes the tanh to transform the weight for autogressive model (default not)")
-	("ReserverZeroFilter", po::value(&m_setDynFilterZero) ->default_value(0), "Reserved option for MDN Mixture Dyn units. Don't use it if you don't know it.")
+	("welearning_rate",     po::value(&m_weLearningRate) ->default_value((real_t)-1, "0"),  "sets the learning rate for we")
+	("mseWeight",           po::value(&m_readMseWeight)  ->default_value(""), "path to the MSE weight (binary float data)")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -204,14 +183,10 @@ Configuration::Configuration(int argc, const char *argv[])
         ("cache_path",        po::value(&m_cachePath)         ->default_value(""),        "sets the cache path where the .nc data is cached for random access")
 	/* Add 16-02-22 Wang: for WE updating */
 	("weExternal",          po::value(&m_weUpdate) ->default_value(false),    "whether update the input word embedding vectors (false)")
-	("weIDDim",           po::value(&m_weIDDim)    ->default_value(-1),       "the WE index is the ?-th dimension of the input vector? (-1)")
-	("weDim",             po::value(&m_weDim)      ->default_value(0),        "the dimension of the word embedding vectors (0)")
-	("weBank",            po::value(&m_weBank)     ->default_value(""),       "the path to the word vectors")
-	("trainedModel",      po::value(&m_trainedParameter)    ->default_value(""), "the path to the trained model paratemeter")
-	("trainedModelCtr",   po::value(&m_trainedParameterCtr) ->default_value(""), "the trainedModel controller. A string of 0/1 whose length is #layer of NN. (default: void, read in all parameters)")
-	("datamv",            po::value(&m_datamvPath)          ->default_value(""), "the path to the data mv file. This file can be read in and initialize MDN parameter (now not in use)")
-	("txtChaDim",         po::value(&m_chaDimLstmCharW)     ->default_value(0), "the dimension of the bag of character for LstmCharW")
-	("txtBank",           po::value(&m_chaBankPath)         ->default_value(""),       "the path to the character vectors for LstmCharW")
+	("weIDDim",           po::value(&m_weIDDim)    ->default_value(-1), "the WE index is the ?-th dimension of the input vector? (-1)")
+	("weDim",             po::value(&m_weDim)      ->default_value(0), "the dimension of the word embedding vectors (0)")
+	("weBank",            po::value(&m_weBank)     ->default_value(""), "the path to the word vectors")
+	("trainedModel",      po::value(&m_trainedParameter) ->default_value(""), "the path to the trained model paratemeter")
         ;
 
     po::options_description weightsInitializationOptions("Weight initialization options");
@@ -221,8 +196,6 @@ Configuration::Configuration(int argc, const char *argv[])
         ("weights_uniform_max",  po::value(&m_weightsUniformMax) ->default_value((real_t)+0.1, "0.1"),  "sets the maximum value of the uniform distribution")
         ("weights_normal_sigma", po::value(&m_weightsNormalSigma)->default_value((real_t)0.1, "0.1"),   "sets the standard deviation of the normal distribution")
         ("weights_normal_mean",  po::value(&m_weightsNormalMean) ->default_value((real_t)0.0, "0"),     "sets the mean of the normal distribution")
-	/* Add 16-04-02 Wang: for initiliaizing the bias for gate of Highway network */
-	("highway_gate_bias",    po::value(&m_highwayBias) -> default_value((real_t)-1.50, "-1.50"),    "sets the bias for the sigmoid function in the gate of highway block")
         ;
 
     po::positional_options_description positionalOptions;
@@ -363,10 +336,8 @@ Configuration::Configuration(int argc, const char *argv[])
         std::cout << "The trained network will be written to '" << m_trainedNetwork << "'." << std::endl;
         if (boost::filesystem::exists(m_trainedNetwork))
             std::cout << "WARNING: The output file '" << m_trainedNetwork << "' already exists. It will be overwritten!" << std::endl;
-    }else if(m_printWeightPath.size()>0){
-	std::cout << "Started in printing mode." << std::endl;
-	std::cout << "Weight will be print to " << m_printWeightPath << std::endl;
-    }else {
+    }
+    else {
         std::cout << "Started in forward pass mode." << std::endl;
 
         std::cout << "The forward pass output will be written to '" << m_feedForwardOutputFile << "'." << std::endl;
@@ -670,30 +641,15 @@ const std::string& Configuration::weBankPath() const
     return m_weBank;
 }
 
-const std::string& Configuration::chaBankPath() const
-{
-    return m_chaBankPath;
-}
-
-
 const std::string& Configuration::mseWeightPath() const
 {
     return m_mseWeightPath;
 }
 
-const std::string& Configuration::weightMaskPath() const
-{
-    return m_weightMaskPath;
-}
 
 const std::string& Configuration::trainedParameterPath() const
 {
     return m_trainedParameter;
-}
-
-const std::string& Configuration::trainedParameterCtr() const
-{
-    return m_trainedParameterCtr;
 }
     
 const unsigned& Configuration::weIDDim() const
@@ -704,12 +660,6 @@ const unsigned& Configuration::weDim() const
 {
     return m_weDim;
 }
-
-const unsigned& Configuration::txtChaDim() const
-{
-    return m_chaDimLstmCharW;
-}
-
 bool Configuration::weUpdate() const
 {
     return m_weUpdate;
@@ -724,100 +674,4 @@ real_t Configuration::weLearningRate() const
 bool Configuration::revertStd() const
 {
     return m_revertStd;
-}
-
-const real_t& Configuration::highwayGateBias() const
-{
-    return m_highwayBias;
-}
-
-const int& Configuration::outputFromWhichLayer() const
-{
-    return m_outputTapLayer;
-}
-
-
-const bool& Configuration::outputFromGateLayer() const
-{
-    return m_outputGateOut;
-}
-
-const int& Configuration::lrDecayEpoch() const
-{
-    return m_lr_decay_epoch;
-}
-const real_t& Configuration::lrDecayRate() const
-{
-    return m_lr_decay_rate;
-}
-
-const std::string& Configuration::mdnFlagPath() const
-{
-    return m_mdnFlagPath;
-}
-
-bool Configuration::mdnFlag() const
-{
-    return m_mdnFlagPath.length()>0;
-}
-
-const std::string& Configuration::mdnDyn() const
-{
-    return m_mdnDyn;
-}
-
-
-const std::string& Configuration::datamvPath() const
-{
-    return m_datamvPath;
-}
-
-const real_t& Configuration::mdnPara() const
-{
-    return m_mdnSamplingPara;
-}
-
-const int& Configuration::EMIterNM() const
-{
-    return m_EMGenIter;
-}
-
-const real_t& Configuration::getVarInitPara() const
-{
-    return m_varInitPara;
-}
-
-const real_t& Configuration::getVFloorPara() const
-{
-    return m_vFloorPara;
-}
-
-const real_t& Configuration::getWInitPara() const
-{
-    return m_wInitPara;
-}
-
-const bool& Configuration::getTiedVariance() const
-{
-    return m_tiedVariance;
-}
-
-const std::string& Configuration::printWeightPath() const
-{
-    return m_printWeightPath;
-}
-
-const std::string& Configuration::mdnVarScaleGen() const
-{
-    return m_mdnVarScaleGen;
-}
-
-const int& Configuration::tanhAutoregressive() const
-{
-    return m_tanhAutoregressive;
-}
-
-const int& Configuration::zeroFilter() const
-{
-    return m_setDynFilterZero;
 }

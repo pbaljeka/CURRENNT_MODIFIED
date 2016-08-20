@@ -1,0 +1,192 @@
+/******************************************************************************
+ * This file is an addtional component of CURRENNT. 
+ * Xin WANG
+ * National Institute of Informatics, Japan
+ * 2016
+ *
+ * This file is part of CURRENNT. 
+ * Copyright (c) 2013 Johannes Bergmann, Felix Weninger, Bjoern Schuller
+ * Institute for Human-Machine Communication
+ * Technische Universitaet Muenchen (TUM)
+ * D-80290 Munich, Germany
+ *
+ *
+ * CURRENNT is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * CURRENNT is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with CURRENNT.  If not, see <http://www.gnu.org/licenses/>.
+ *****************************************************************************/
+
+
+#ifdef _MSC_VER
+#   pragma warning (disable: 4244) // thrust/iterator/iterator_adaptor.h(121): warning C4244: '+=' : conversion from '__int64' to 'int', possible loss of data
+#endif
+
+
+#include "CNNLayer.hpp"
+
+#include "../helpers/getRawPointer.cuh"
+#include "../helpers/Matrix.hpp"
+#include "../helpers/min.cuh"
+#include "../helpers/max.cuh"
+#include "../helpers/safeExp.cuh"
+#include "../helpers/JsonClasses.hpp"
+
+#include "../activation_functions/Tanh.cuh"
+#include "../activation_functions/Logistic.cuh"
+#include "../activation_functions/Identity.cuh"
+#include "../activation_functions/Relu.cuh"
+
+#include "../Configuration.hpp"
+
+#include <boost/foreach.hpp>
+#include <boost/random/normal_distribution.hpp>
+#include <boost/random/uniform_real_distribution.hpp>
+#include <boost/random/mersenne_twister.hpp>
+
+#include <thrust/reduce.h>
+#include <thrust/transform.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
+
+#include <fstream>
+#include <cmath>
+
+#define DEBUG_LOCAL_CNN 1
+
+namespace interal{
+namespace{
+
+    
+} // namespace 
+} // namespace internal
+
+namespace CNNTools{
+    // calculate the dimension of output features
+    int featureDim(const int inputDim,  const int paddDim,
+		   const int filterDim, const int stride)
+    {
+	return (int)std::floor(inputDim - filterDim + 2*paddDim)+1;
+    }
+    
+    int getFeatureDim()
+    {
+
+    }
+}
+
+
+namespace layers {
+    
+    /*****************************************************************************************
+     * CNN feature unit
+     *****************************************************************************************/
+    template <typename TDevice>
+    CNNUnit<TDevice>::CNNUnit(const int fWidth,  const int fHeight,
+			      const int strideW, const int strideH,
+			      const int poolW,   const int poolH,
+			      const int paddW,   const int paddH,
+			      Layer<TDevice> &precedingLayer)
+	: m_filterW   (fWidth)
+	, m_filterH   (fHeight)
+	, m_strideW   (strideW)
+	, m_strideH   (strideH)
+	, m_poolW     (poolW)
+	, m_poolH     (poolH)
+	, m_paddW     (paddW)
+	, m_paddH     (paddH)
+	, m_precedingLayer (precedingLayer)
+    {
+	// initializing
+	
+	// the size of m_featureOutput must be determined for each fraction of data
+	//  in loadSequence stage
+	// const int inputW,  const int inputH, const int inputC,
+	m_inputW = m_inputH = m_inputC = -1;  
+	
+	
+    }
+
+    template <typename TDevice>
+    CNNUnit<TDevice>::~CNNUnit()
+    {
+    }
+    
+    template <typename TDevice>
+    void CNNUnit<TDevice>::computeForwardPass()
+    {
+    }
+    
+    template <typename TDevice>
+    void CNNUnit<TDevice>::computeBackwardPass()
+    {
+    }
+
+
+    /*****************************************************************************************
+     * CNN layer 
+     *****************************************************************************************/
+    template <typename TDevice>
+    CNNLayer<TDevice>::CNNLayer(
+        const helpers::JsonValue &layerChild, 
+        const helpers::JsonValue &weightsSection,
+        Layer<TDevice> &precedingLayer)
+	: m_weightDim              ()
+	, TrainableLayer<TDevice>  (layerChild, weightsSection, 1, 0,  precedingLayer)
+    {
+	// handling the specification
+	
+	// revise the m_outputs, m_outputErrors, m_outputErrorsCopy
+	
+    }
+    
+    template <typename TDevice>
+    CNNLayer<TDevice>::~CNNLayer()
+    {
+    }
+    
+    template <typename TDevice>
+    void CNNLayer<TDevice>::computeForwardPass()
+    {
+    }
+    
+    template <typename TDevice>
+    void CNNLayer<TDevice>::computeBackwardPass()
+    {
+    }
+
+    template <typename TDevice>
+    void CNNLayer<TDevice>::loadSequences(const data_sets::DataSetFraction &fraction)
+    {
+	// load the sequences for TrainableLayers
+	TrainableLayer<TDevice>::loadSequences(fraction);
+	
+	// 
+    }
+
+    template <typename TDevice>
+    void CNNLayer<TDevice>::mergeOutput()
+    {
+    }
+    
+    template <typename TDevice>
+    const std::string& CNNLayer<TDevice>::type() const
+    {
+	static const std::string m("cnn");
+	return m;
+    }
+    
+    template class CNNUnit<Cpu>;
+    template class CNNUnit<Gpu>;
+    template class CNNLayer<Gpu>;
+    template class CNNLayer<Cpu>;
+}

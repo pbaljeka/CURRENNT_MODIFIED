@@ -1,0 +1,118 @@
+/*
+
+*/
+
+
+#ifdef _MSC_VER
+#   pragma warning (disable: 4244) // thrust/iterator/iterator_adaptor.h(121): warning C4244: '+=' : conversion from '__int64' to 'int', possible loss of data
+#endif
+
+#include "MDNLayer.hpp"
+#include "../helpers/getRawPointer.cuh"
+#include "../Configuration.hpp"
+
+#include <thrust/reduce.h>
+#include <thrust/transform.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
+
+
+namespace internal {
+namespace {
+    
+    template <typename TDevice>
+    class MDNUnit
+    {
+	typedef typename TDevice::real_vector real_vector;
+
+    public:
+	const int m_startDim;            // the start dimension of the MDN unit
+	const int m_endDim;              // the end dimension of the MDN unit
+                                         // between m_startDim and m_endDim is the data to be processed
+	                                 // this unit
+	real_vector m_mdnOutput;         // the output of processing
+
+	layers::Layer<TDevice> *m_preSkipLayer;  // previous layer
+
+
+       
+	MDNUnit(int &startDim, int &endDim);
+
+	virtual ~MDNUnit();
+
+	// pure vitural function that must be over-written
+	virtual void computeForward() =0;        // transform the previous output into MDN parameters
+	
+	virtual void getOutput() =0;             // sampling output from MDN
+	
+	virtual void calculateError() =0;        // calculate the error (-log likelihood)
+
+	virtual void computeBackward() =0;       // back ward computation  
+	
+    };
+
+
+    template <typename TDevice>
+    MDNUnit<TDevice>::MDNUnit(int &startDim, int &endDim)
+	: m_startDim(startDim)
+	, m_endDim  (endDim)
+    {
+	
+	
+    }
+    
+}
+}
+
+
+namespace layers {
+
+    //
+    template <typename TDevice>
+    MDNLayer<TDevice>::MDNLayer(const helpers::JsonValue &layerChild, Layer<TDevice> &precedingLayer)
+	: PostOutputLayer<TDevice>(layerChild, precedingLayer, precedingLayer.size())
+    {
+        // initialize the vector
+        m_mdnVec.resize(precedingLayer.size());
+
+        const Configuration &config = Configuration::instance();
+        
+        // parse the MDN vector
+
+    }
+
+    template <typename TDevice>
+    MDNLayer<TDevice>::~MDNLayer()
+    {
+    }
+
+    template <typename TDevice>
+    const std::string& MDNLayer<TDevice>::type() const
+    {
+        static const std::string s("mdn");
+        return s;
+    }
+
+    template <typename TDevice>
+    real_t MDNLayer<TDevice>::calculateError()
+    {
+	return 0.0;
+    }
+
+    
+    template <typename TDevice>
+    void MDNLayer<TDevice>::computeForwardPass()
+    {
+    }
+
+    template <typename TDevice>
+    void MDNLayer<TDevice>::computeBackwardPass()
+    {
+    }
+
+
+    template class MDNLayer<Cpu>;
+    template class MDNLayer<Gpu>;
+
+}

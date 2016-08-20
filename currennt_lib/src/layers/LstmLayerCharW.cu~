@@ -46,7 +46,7 @@
 
 #define CPNUM 3  // parameter number of the character window (alpha, beta, kappa)
 
-// #define DEBUG_LOCAL_LSTMCHARW 1     // I turn on DEBUG_LOCAL for debugging
+#define DEBUG_LOCAL_LSTMCHARW 1     // I turn on DEBUG_LOCAL for debugging
 
 
 namespace internal {

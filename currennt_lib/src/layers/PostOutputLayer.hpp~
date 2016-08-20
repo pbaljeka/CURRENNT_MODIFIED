@@ -44,7 +44,7 @@ namespace layers {
 	
 	/* Add 0401 for weighted MSE */
 	real_vector m_outputMseWeights;  // vector for MSE output weights
-	bool        m_flagMseWeight;     // whether to use m_flagMseWeight
+	bool m_flagMseWeight;            // whether to use m_flagMseWeight
 	
     protected:
         real_vector& _targets();
@@ -66,19 +66,17 @@ namespace layers {
             const helpers::JsonValue &layerChild, 
             Layer<TDevice>  &precedingLayer,
             int requiredSize,
-            bool createOutputs = true
+            bool                      createOutputs = true
             );
 	
 	/* Add 0401 for weighted MSE */
-	bool readMseWeight(const std::string mseWeightPath);
+	bool readMseWeight(const std::string mseWeightPath, const unsigned dim);
 	bool flagMseWeight();
 	
         /**
          * Destructs the Layer
          */
         virtual ~PostOutputLayer();
-
-	Layer<TDevice>& precedingLayer();
 
         /**
          * @see Layer::loadSequences()
@@ -92,18 +90,6 @@ namespace layers {
          */
         virtual real_t calculateError() =0;
 
-	/**
-	 * Re-initialize the network
-	   only defines for Trainable Layers, here do nothing
-	 */
-	virtual void reInitWeight();
-
-	/* *
-	 * Functions to enable the trainable features of PostOutput Layer
-	 */
-	// Whether this layer is trainable (default false)
-	virtual bool flagTrainable() const;
-	
     };
 
 } // namespace layers
