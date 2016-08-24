@@ -77,6 +77,7 @@
 //#define DEBUG_LOCAL 1     // I turn on DEBUG_LOCAL for debugging
 //#define ALTER_TIEVAR 1    // Whether tied variance for all mixtures (not useful anymore)
 
+#define DEBUG_LOCAL_LOCAL 1     // I turn on DEBUG_LOCAL for debugging
 #define MIXTUREDYNDIAGONAL 1// Whether the transformation matrix in mixture_dyn should diagonal?
 
 
@@ -414,7 +415,10 @@ namespace {
 	    // position of the gradient data in the NN output layer side
 	    const int pos_error= layerSizeIn * timeStep + dimStep + startD;
 
-	    // store the gradient there
+	    // calculate the gradient
+	    // note: we assume the training data will be normalized with zero mean.
+	    //       thus, data \in {-a, a}, where the value of a is determined by
+	    //       the data corpus, usually, a positive number
 	    *(errors+pos_error) = (*(data)>0)?(-1+prob):(prob);
 
 	}
@@ -747,7 +751,7 @@ namespace {
 	    pos_data = ((timeStep - stepBack)  * layerSizeOut) + startDOut + featIndex;
 	    
 	    /********************* FATAL ERROR *******************
-	     * b can only be added onece when stepBack==1
+	     * b can only be added once when stepBack==1
 	     *****************************************************/
 	    if (linearPart != NULL && biasPart != NULL){
 		*(mdnPara + pos_mean) = ((*(mdnPara      + pos_mean))  + 
@@ -767,7 +771,60 @@ namespace {
 	    }
 	}
     };
-   
+
+    struct ShiftBiasStep1TiedCaseDimensionAxis
+    {
+	// Shift the mean value u => u + w^To + b
+	// This function is used by mixture_dyn and mixture_dynSqr
+	// The difference is the source of the parameter w and b
+	int startDOut;
+	int layerSizeOut;
+	int featureDim;
+	int mixNum;
+	int totalTime;
+	int trainableAPos;      // w, the w predicted by the network, I name it as a now
+	int trainableBPos;      // b, the b which is predicted by the network
+	int stepBack;           // how many steps to look back ?
+
+	real_t   *linearPart;   // w, where w is trainable but shared across time steps
+	real_t   *biasPart;     // b, where b is trainable but shared across time steps
+	real_t   *targets;      // o_t-1
+	real_t   *mdnPara;      // 
+	
+	bool      tieVar;
+
+	// from 1 to timesteps * num_mixture
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    
+	    int timeStep  = idx  / (featureDim * mixNum);
+	    int temp      = idx  % (featureDim * mixNum); 
+	    int mixIndex  = temp /  featureDim;
+	    int featIndex = temp %  featureDim;
+	    
+	    if (featIndex < stepBack){
+		// skip the first dimension
+		return;
+	    }
+	    
+	    int pos_mean, pos_data;
+	    // Add to the mean value
+	    pos_mean = (totalTime * mixNum + 
+			timeStep  * featureDim * mixNum + 
+			mixIndex  * featureDim + featIndex); 
+	    pos_data = (timeStep  * layerSizeOut) + startDOut + featIndex - stepBack;
+	    
+	    if (linearPart != NULL && biasPart != NULL){
+		*(mdnPara + pos_mean) = ((*(mdnPara      + pos_mean))  + 
+					 ((*(linearPart)) * (*(targets+pos_data))) + 
+					 ((stepBack==1)  ? (*(biasPart)):0)
+					 );
+	    }else{
+		/* not implemented for context-dependent case */
+	    }
+	}
+    };
+
     struct ShiftBiasStep2TiedCase
     {
 	// Accumulating the statistics for BP on the linear regression part W^T o+b
@@ -826,7 +883,7 @@ namespace {
 	    pos_data = (layerSizeOut * (timeStep)) + startDOut + featIndex;
 	    pos_dataShift = (layerSizeOut * (timeStep - backStep)) + startDOut + featIndex;
 	    
-	    // Note, the vector of time k and mixture n of is continuos in memory
+	    // Note, dimension -> backstep -> mixture -> time
 	    pos_buffW = (timeStep * mixNum + mixIndex) * featureDim * backOrder +
 		        (backStep-1) * featureDim + featIndex;
 	    
@@ -841,12 +898,97 @@ namespace {
 	    
 	    if (backStep == 1){
 		// do this for one time when backStep == 1
-		pos_buffb = pos_buffW + backOrder * totalTime * featureDim * mixNum;
+		/* *** FATAL ERROR **
+		 *  Can't use pos_buffW here
+		 * ******************* */
+		//pos_buffb = pos_buffW + backOrder * totalTime * featureDim * mixNum;
+		pos_buffb = backOrder * totalTime * featureDim * mixNum;
+		pos_buffb+= (timeStep * mixNum + mixIndex) * featureDim + featIndex;
+
 		*(gradBuf + pos_buffb) = grad;
 	    }
 	}
     };
-    
+
+    struct ShiftBiasStep2TiedCaseDimensionAxis
+    {
+	// Accumulating the statistics for BP on the linear regression part W^T o+b
+	// -1 * posteriorP(k) * (O_t - (u + W_k ^ T O_t-1 + b_k)) * O_t-1 / var^k_d / var^k_d
+	// -1 * posteriorP(k) * (O_t - (u + W_k ^ T O_t-1 + b_k)) / var^k_d / var^k_d
+	
+	int featureDim;
+	int mixNum;
+	int totalTime;
+	int startDOut;
+	int layerSizeOut;
+	int backOrder;
+
+	real_t   *gradBuf;
+	real_t   *target;       // x
+	real_t   *mdnPara;      // 
+	real_t   *postPbuff;
+	bool      tieVar;
+
+	// from 1 to timesteps * num_mixture
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    
+	    int temp      = idx % (featureDim * mixNum); 
+	    int featIndex = temp % featureDim; 
+	    int mixIndex  = temp / featureDim;
+	    int temp2     = idx  / (featureDim * mixNum);
+	    int timeStep  = temp2 % totalTime;
+	    int backStep  = temp2 / totalTime + 1;
+
+
+	    // skip the first time step
+	    if (featIndex < backStep)
+		return;
+	    
+	    // set the pointer
+	    int pos_mean,  pos_var, pos_data, pos_dataShift;
+	    int pos_buffW, pos_buffb;
+	    pos_mean = (totalTime * mixNum + 
+			timeStep  * featureDim * mixNum + 
+			mixIndex  * featureDim + featIndex); 
+	    pos_var  = (totalTime * (mixNum + mixNum * featureDim)      + 
+			timeStep  *  mixNum * (tieVar ? 1 : featureDim) + 
+			mixIndex  * (tieVar ? 1 : featureDim)           +
+			(tieVar ? 0 : featIndex)); 
+	    
+	    // pointer to the posterior P and sum of posterior P
+	    const real_t *postP   = postPbuff + timeStep  * mixNum + mixIndex;
+	    const real_t *sumPost = postPbuff + totalTime * mixNum + timeStep;
+	    real_t posterior = helpers::safeExp((*postP) - (*sumPost));
+	    
+	    // point to the targets data x
+	    /***********p******** Fatal Error ****************************
+	     * : how could I just use pos_dataShift as pos_data ??? 
+	     ************************************************************/
+	    pos_data = (layerSizeOut * (timeStep)) + startDOut + featIndex;
+	    pos_dataShift = (layerSizeOut * timeStep) + startDOut + featIndex - backStep;
+	    
+	    // Note, dimension -> backstep -> mixture -> time
+	    pos_buffW = ((timeStep * mixNum + mixIndex) * featureDim + featIndex) * backOrder +
+		        (backStep-1);
+	    
+	    //pos_buffW = (timeStep * mixNum + mixIndex) * featureDim + featIndex;
+	    //pos_buffb = pos_buffW + totalTime * featureDim * mixNum;
+	    
+	    real_t grad = (-1 * posterior * (*(target + pos_data) - *(mdnPara + pos_mean)) /
+			   (*(mdnPara + pos_var)) / (*(mdnPara + pos_var)));
+	    
+	    *(gradBuf + pos_buffW) = grad * (*(target + pos_dataShift));
+	    
+	    if (backStep == 1){
+		// do this for one time when backStep == 1
+		pos_buffb = backOrder * totalTime * featureDim * mixNum;
+		pos_buffb+= (timeStep * mixNum + mixIndex) * featureDim + featIndex;
+		*(gradBuf + pos_buffb) = grad;
+	    }
+	}
+    };
+
     struct TanhAutoRegWeightStep1
     {
 	int     featureDim;
@@ -973,7 +1115,7 @@ namespace {
 	    pos_data1 = (timeStep>0)?((layerSizeOut * (timeStep-1)) + startDOut + featIndex):-1;
 	    pos_data2 = (timeStep>1)?((layerSizeOut * (timeStep-2)) + startDOut + featIndex):-1;
 	    
-	    // Note, the vector of time k and mixture n of is continuos in memory
+	    // Note, dimension -> backstep -> mixture -> time
 	    pos_buffW = (timeStep * mixNum + mixIndex) * featureDim * backOrder +
 		        (backStep-1) * featureDim + featIndex;
 	    
@@ -999,7 +1141,105 @@ namespace {
 	    *(gradBuf + pos_buffW) = grad * dataBuff;
 	    if (backStep == 1){
 		// do this for one time when backStep == 1
-		pos_buffb = pos_buffW + backOrder * totalTime * featureDim * mixNum;
+		/* ***** FATAL ERROR ******
+		 * pos_buffb can't be shifted from pos_buffW
+		 * ************************ */
+		//pos_buffb = pos_buffW + backOrder * totalTime * featureDim * mixNum;
+		pos_buffb = backOrder * totalTime * featureDim * mixNum;
+		pos_buffb+= (timeStep * mixNum + mixIndex) * featureDim + featIndex;
+		*(gradBuf + pos_buffb) = grad;
+	    }
+	}
+    };
+
+    struct ShiftBiasStep2TiedCaseAutoRegDimensionAxis
+    {
+	// Accumulating the statistics for BP on the linear regression part W^T o+b
+	// Only implemented for 1st and 2nd order case
+	// For 2-order case
+	// Gradients = 
+	//    for a1: -1 * posterior(m) * (o-mean)/var^2 * [o_t-1 - a2*o_t-2] * [1-a1^2]
+	//    for a2: -1 * posterior(m) * (o-mean)/var^2 * [o_t-1 - a1*o_t-2] * [1-a2^2]
+	//    o_t-1 and o_t-2 are zero when t-1 < 0 or t-2 < 0
+	// For 1-order case
+	//    for a1: -1 * posterior(m) * (o-mean)/var^2 * [o_t-1] * [1-a1^2]
+	int featureDim;
+	int mixNum;
+	int totalTime;
+	int startDOut;
+	int layerSizeOut;
+	int backOrder;
+
+	real_t   *gradBuf;
+	real_t   *target;       // x
+	real_t   *mdnPara;      // 
+	real_t   *postPbuff;
+	real_t   *transBuff;
+	bool      tieVar;
+
+	// from 1 to timesteps * num_mixture
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    
+	    int temp      = idx % (featureDim * mixNum); 
+	    int featIndex = temp % featureDim; 
+	    int mixIndex  = temp / featureDim;
+	    int temp2     = idx  / (featureDim * mixNum);
+	    int timeStep  = temp2 % totalTime;
+	    int backStep  = temp2 / totalTime + 1;
+
+
+	    
+	    // set the pointer
+	    int pos_mean,  pos_var, pos_data, pos_data1, pos_data2;
+	    int pos_buffW, pos_buffb;
+	    
+	    pos_mean = (totalTime * mixNum + 
+			timeStep  * featureDim * mixNum + 
+			mixIndex  * featureDim + featIndex); 
+	    pos_var  = (totalTime * (mixNum + mixNum * featureDim)      + 
+			timeStep  *  mixNum * (tieVar ? 1 : featureDim) + 
+			mixIndex  * (tieVar ? 1 : featureDim)           +
+			(tieVar ? 0 : featIndex)); 
+	    
+	    // pointer to the posterior P and sum of posterior P
+	    const real_t *postP   = postPbuff + timeStep  * mixNum + mixIndex;
+	    const real_t *sumPost = postPbuff + totalTime * mixNum + timeStep;
+	    real_t posterior = helpers::safeExp((*postP) - (*sumPost));
+	    
+	    // point to the targets data x
+	    pos_data  = (layerSizeOut * (timeStep))    + startDOut + featIndex;
+	    pos_data1 = (featIndex>0)?(layerSizeOut*timeStep + startDOut + featIndex-1):-1;
+	    pos_data2 = (featIndex>1)?(layerSizeOut*timeStep + startDOut + featIndex-2):-1;
+	    
+	    // Note, backstep -> dimension -> mixture -> time
+	    pos_buffW = ((timeStep * mixNum + mixIndex) * featureDim + featIndex) * backOrder +
+		        (backStep-1);
+	    
+	    //pos_buffW = (timeStep * mixNum + mixIndex) * featureDim + featIndex;
+	    //pos_buffb = pos_buffW + totalTime * featureDim * mixNum;
+	    
+	    
+	    real_t grad = (-1 * posterior * (*(target + pos_data) - *(mdnPara + pos_mean)) /
+			   (*(mdnPara + pos_var)) / (*(mdnPara + pos_var)));
+	    
+	    real_t dataBuff = (pos_data1>0)?(*(target+pos_data1)):0;
+	    if (backOrder == 2){
+		dataBuff   += (((pos_data2>0)?(*(target+pos_data2)):0) * 
+			       ((backStep == 1)?
+				(*(transBuff + 1)):
+				(*(transBuff + 0))) * 
+			       -1);
+	    }
+	    dataBuff *=  ((backStep==1) ?
+		      (1-(*(transBuff+0))*(*(transBuff+0))) :
+		      (1-(*(transBuff+1))*(*(transBuff+1))));
+	    
+	    *(gradBuf + pos_buffW) = grad * dataBuff;
+	    if (backStep == 1){
+		// do this for one time when backStep == 1
+		pos_buffb = backOrder * totalTime * featureDim * mixNum + 
+		            (timeStep * mixNum + mixIndex) * featureDim + featIndex;
 		*(gradBuf + pos_buffb) = grad;
 	    }
 	}
@@ -1751,10 +1991,17 @@ or
 namespace layers {
     
     // This function defines the number of parameters required for Mixture_dyn unit
-    int MixtureDynWeightNum(int featureDim, int mixNum, int backOrder){
+    int MixtureDynWeightNum(int featureDim, int mixNum, int backOrder, int dynDirection){
 	#ifdef MIXTUREDYNDIAGONAL
 	// Diagonal matrix shared by the single mixture
-	return (featureDim * backOrder + featureDim);
+	if (dynDirection == MDNUNIT_TYPE_1_DIRECT){
+	    return (featureDim * backOrder + featureDim);
+	}else if (dynDirection == MDNUNIT_TYPE_1_DIRECD){
+	    return (backOrder + 1);
+	}else{
+	    return (backOrder + 1) * (featureDim + 1);
+	}
+
 	#else
 	// Full transformation matrices for different mixtures
 	return featureDim * (featureDim + 1)  * mixNum;
@@ -1797,7 +2044,8 @@ namespace layers {
 	  ...]
 	*/
 
-	// Add 0621: To read in the vector to scale each dimension of the variace of mixture model 
+	// Add 0621: To read in the MDN mixture variance scale vector
+	// for generation 
 	const Configuration &config = Configuration::instance();        
 	if (config.mdnVarScaleGen().size() > 0){
 	    std::ifstream ifs(config.mdnVarScaleGen().c_str(), 
@@ -1824,7 +2072,9 @@ namespace layers {
 		ifs.close();
 	    }else{
 		ifs.close();
-		throw std::runtime_error("Dimension unmatch: var scale vector");
+		printf("Dimension mismatch: %d (vector) VS %d (tartget feature)", 
+		       tmpnumEle, this->m_layerSizeTar);
+		throw std::runtime_error("Dimension unmatch");
 	    }
             
 	}else{
@@ -1859,12 +2109,13 @@ namespace layers {
     template <typename TDevice>
     bool MDNUnit<TDevice>::flagVariance() const
     {
-	return false; // default for all units
+	return false; // default, false for all units
     }
     
     template <typename TDevice>
     void MDNUnit<TDevice>::linkWeight(real_vector& weights, real_vector& weightsUpdate)
     {	
+	// default, untrainable units doesn't require trainable weight
     }
 
     /********************************************************
@@ -1950,7 +2201,7 @@ namespace layers {
     void MDNUnit_sigmoid<TDevice>::computeForward()
     {
 	
-	// sigmoid, o_i_g = sigmoid(a_i_g)
+	// sigmoid, o_i_g = sigmoid(a_i_g), where a_i_g is the output of the previous hidden layer
 	{{
 		internal::ComputeSigmoid fn;
 		fn.NNOutputSize = this->m_precedingLayer.size();
@@ -1993,7 +2244,7 @@ namespace layers {
     template <typename TDevice>
     void MDNUnit_sigmoid<TDevice>::getOutput(const real_t para, real_vector &targets)
     {
-	// Here, probability is directly used as output
+	// Here, probability p(1) is directly used as output
 	// sampling output
 	{{
 		internal::SamplingSigmoid fn;
@@ -2026,13 +2277,12 @@ namespace layers {
 		...
 	}}*/
 	{{
-		// actually not sampling. but the method is the same
-		// only the position of output is different
-		// just borrow the function
+		// the same function for getOutput
+		// only the position of output in the output vector
 		internal::SamplingSigmoid fn;
 		fn.NNTargetSize = this->m_precedingLayer.size();
-		fn.startDTarget = this->m_startDim;
-		fn.endDTarget   = this->m_endDim;
+		fn.startDTarget = this->m_startDim;  // position in the output parameter vector
+		fn.endDTarget   = this->m_endDim;    // position in the output parameter vector
 		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
 		fn.NNTarget     = targets; 
 
@@ -2054,6 +2304,7 @@ namespace layers {
     real_t MDNUnit_sigmoid<TDevice>::calculateError(real_vector &targets)
     {
 	// - sum_n_1_N sum_m_1_M ( (output_n_m>0) * log p(1|x) + (output_n_m<0) * log (1-p(1|x))
+	// where N is the timestep, M is the dimension
 	real_t tmp = 0.0;
 	{{
 		internal::ComputeSigmoidError fn;
@@ -2066,7 +2317,7 @@ namespace layers {
 		
 		int n =this->m_precedingLayer.curMaxSeqLength();
 		n = n*this->m_precedingLayer.parallelSequences();
-		n = n*this->m_paraDim;
+		n = n*this->m_paraDim; // = this->m_endDim - this->m_startDim
 		
 		tmp = thrust::transform_reduce(
 		         thrust::make_zip_iterator(
@@ -2106,7 +2357,11 @@ namespace layers {
     template <typename TDevice>
     void MDNUnit_sigmoid<TDevice>::computeBackward(real_vector &targets)
     {
-	
+	// calculate the gradient w.r.t the input to this sigmoid unit
+	// pay attention to the assumption:
+	// 1. the output of sigmoid unit \in (0,1)
+	// 2. the training data of sigmoid \in {-a,a}, due to the normalization on
+	//    the target feature
 	{{
 		internal::ComputeSigmoidBP fn;
 		fn.startD       = this->m_startDim;
@@ -2178,6 +2433,8 @@ namespace layers {
 	if ((endDimOut - startDimOut) != 1){
 	    throw std::runtime_error("Check MDN configure. SoftMax => one dimensional target");
 	}
+	
+	throw std::runtime_error("WARNING: code on softmax is incomplete\n");
 	
     }
 
@@ -2429,7 +2686,7 @@ namespace layers {
         : MDNUnit<TDevice>(startDim, endDim, startDimOut, endDimOut, 
 			   type, (endDim-startDim), precedingLayer,
 			   outputSize, trainable)
-	, m_numMixture    (type)
+	, m_numMixture    (type) // I forget why I used type to name m_numMixture
 	, m_featureDim    (featureDim)
 	, m_varFloor      (0.0)
 	, m_tieVar        (tieVar)
@@ -2444,8 +2701,6 @@ namespace layers {
 	// for BP variance accumulation (only used for tied variance)
 	if (m_tieVar)
 	    m_varBP.resize(this->m_precedingLayer.patTypes().size()*(endDim-startDim)*type, 0.0);
-
-	
 			 
     }
 
@@ -2465,7 +2720,7 @@ namespace layers {
 			 this->m_numMixture)));
 	tempFlag = tempFlag && (this->m_featureDim == (this->m_endDimOut - this->m_startDimOut));
 	if (!tempFlag){
-	    printf("\tMixture unit. Do you need to set tieVar ?\t");
+	    printf("\tMixture unit check failed. Please check dimension and tieVariance\t");
 	}
 	return tempFlag;
     }
@@ -2584,7 +2839,7 @@ namespace layers {
 	//
 	// softmax part for mixture weight
 	//
-	// calculate the offset 
+	// calculate the offset for mixture weight
 	{{
 		internal::CalculateOffsetFn fn;
 		fn.NNOutputSize = this->m_precedingLayer.size();
@@ -2605,7 +2860,7 @@ namespace layers {
 		
 	}}	    
 
-	// calculate the exp(w_k)
+	// calculate the exp(w_k - offset) 
 	{{
 		internal::CalculateExpFn fn;
 		fn.NNOutputSize = this->m_precedingLayer.size();
@@ -2798,6 +3053,8 @@ namespace layers {
 	while(!finish)
 	{   
 	    {{
+
+		// initIterEMGen: compute the argmax_o_new \sum_m p(m|o_old) log p(o_new, m)
 		internal::initIterEMGen fn;
 		fn.featureDim   = this->m_featureDim;
 		fn.mixtureNM    = this->m_numMixture;
@@ -3489,24 +3746,30 @@ namespace layers {
     MDNUnit_mixture_dyn<TDevice>::MDNUnit_mixture_dyn(
 	int startDim,       int endDim, int startDimOut, int endDimOut,     int type, 
 	Layer<TDevice> &precedingLayer, int outputSize,  const bool tieVar, 
-	int weightStart, int weightNum, int backOrder, const int trainable)
+	int weightStart, int weightNum, int backOrder, 
+	const int trainable, const int dynDirection)
         : MDNUnit_mixture<TDevice>(startDim, endDim, startDimOut, endDimOut, 
 				   type, endDimOut - startDimOut, precedingLayer, 
 				   outputSize, tieVar, trainable)
     {
-	m_weightStart = weightStart;
-	m_weightNum   = weightNum;
-	m_backOrder   = backOrder;
+	// type refers to the number of mixture here
+	int numMixture = type;
+	
+	m_dynDirection = dynDirection;
+	m_weightStart  = weightStart;
+	m_weightNum    = weightNum;
+	m_backOrder    = backOrder;
 	
 	// initialize the dataBuff, which has the same wides as output of this MDNUnit
 	m_maxTime      = precedingLayer.maxSeqLength();
 	
 	#ifdef MIXTUREDYNDIAGONAL
 	// to save the intermediate results
-	m_dataBuff.resize (m_maxTime * this->m_featureDim * (type * m_backOrder + type), 0.0);
+	m_dataBuff.resize (m_maxTime   * this->m_featureDim * 
+			   (numMixture * m_backOrder + numMixture), 0.0);
 	#else
 	printf("Backorder > 1 is not implemented for full matrix regression");
-	m_dataBuff.resize (m_maxTime * this->m_featureDim * (type + 1),    0.0);
+	m_dataBuff.resize (m_maxTime * this->m_featureDim * (numMixture + 1),    0.0);
 	#endif
 
 	const Configuration &config = Configuration::instance();
@@ -3516,11 +3779,30 @@ namespace layers {
 	    m_tanhReg  = 0;
 	    m_wTransBuff.clear();
 	}else{
-	    m_wTransBuff.resize(this->m_featureDim * 4, 0);
+	    m_wTransBuff.resize((this->m_featureDim + 1) * 4, 0); // the maximum size it can have
+	}
+
+	// length of the AR parameter 
+	if (dynDirection == MDNUNIT_TYPE_1_DIRECT){
+	    m_linearPartLength = this->m_featureDim;
+	    m_biasPartLength   = this->m_featureDim;
+	    m_weightShiftToDim = 0;
+	    m_wTransBuffShiftToDim = 0;
+	}else if (dynDirection == MDNUNIT_TYPE_1_DIRECD){
+	    m_linearPartLength = 1;
+	    m_biasPartLength   = 1;
+	    m_weightShiftToDim = 0;
+	    m_wTransBuffShiftToDim = 0;
+	}else{
+	    m_linearPartLength = this->m_featureDim + 1;
+	    m_biasPartLength   = this->m_featureDim + 1;
+	    m_weightShiftToDim = this->m_featureDim * (m_backOrder + 1);
+	    m_wTransBuffShiftToDim = this->m_featureDim * 4;
 	}
 	
+	
 	cpu_real_vector temp;	
-	temp.resize(m_maxTime * type, 1.0);
+	temp.resize(m_maxTime * numMixture * this->m_featureDim, 1.0);
 	m_oneVec    = temp;
     }
     
@@ -3535,16 +3817,16 @@ namespace layers {
 	return this->MDNUnit_mixture<TDevice>::flagValid();
     }
     
-    template <typename TDevice>
+     template <typename TDevice>
     void MDNUnit_mixture_dyn<TDevice>::linkWeight(real_vector& weights, real_vector& weightsUpdate)
     {                                                           
 	m_weights          = &weights; // point to the vector data (but with bias)
 	
 	const Configuration &config = Configuration::instance();
 	if(config.zeroFilter()){
-	    // only set the weight part to zero
+	    // only set the weight part to zero, not the bias
 	    thrust::fill(weights.begin() + m_weightStart, 
-			 weights.begin() + m_weightStart + m_weightNum - this->m_featureDim, 
+			 weights.begin() + m_weightStart + m_weightNum - m_biasPartLength, 
 			 0.0);
 	}
 	
@@ -3564,30 +3846,67 @@ namespace layers {
 	// do the normal feedforward for the MDN part
 	this->MDNUnit_mixture<TDevice>::computeForward();
 
-	// transform the weight and save in the buffer if necessary
+	// For AR filter based on tanh(\alpha),
+	// transform the tanh(\alpha) to the coefficients of AR filter
 	if ((this->m_tanhReg >0) && this->m_backOrder < 3){
-	    internal::TanhAutoRegWeightStep1 fn1;
-	    internal::TanhAutoRegWeightStep2 fn2;
 	    
-	    fn1.backOrder  = this->m_backOrder;
-	    fn1.featureDim = this->m_featureDim;
-	    fn1.weight     = helpers::getRawPointer(*this->m_weights);
-	    fn1.weightOut  = helpers::getRawPointer(this->m_wTransBuff);
-	    thrust::for_each(
-			     thrust::counting_iterator<int>(0),
-			     thrust::counting_iterator<int>(0)+2*this->m_featureDim,
-			     fn1);
+	    // Update the AR along the time axis
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT || 
+		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
+		internal::TanhAutoRegWeightStep1 fn1;
+		internal::TanhAutoRegWeightStep2 fn2;
+		fn1.backOrder  = this->m_backOrder;
+		fn1.featureDim = this->m_featureDim;
+		/* ******** FATAL ERROR *************
+		 * this->m_weights is the shared weight vector
+		 * **********************************/
+		//fn1.weight     = helpers::getRawPointer(*this->m_weights);
+		fn1.weight     = this->m_weightsPtr;
+	    
+		fn1.weightOut  = helpers::getRawPointer(this->m_wTransBuff);
+		thrust::for_each(
+				 thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0) + this->m_featureDim * 2,
+				 fn1);
+		
+		fn2.featureDim = this->m_featureDim;
+		fn2.weight     = helpers::getRawPointer(this->m_wTransBuff);
+		fn2.weightOut  = helpers::getRawPointer(this->m_wTransBuff)+this->m_featureDim * 2;
+		thrust::for_each(
+				 thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0) + this->m_featureDim * 2,
+				 fn2);
+	    }
+	    
+	    // Update the AR along the dimension axis
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECD || 
+		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
+		internal::TanhAutoRegWeightStep1 fn1;
+		internal::TanhAutoRegWeightStep2 fn2;
+		fn1.backOrder  = this->m_backOrder;
+		fn1.featureDim = 1;
+		fn1.weight     = this->m_weightsPtr + this->m_weightShiftToDim;
+		fn1.weightOut  = helpers::getRawPointer(this->m_wTransBuff) + 
+		                 this->m_wTransBuffShiftToDim;
+		thrust::for_each(
+				 thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0) + 2,
+				 fn1);
+		
+		fn2.featureDim = 1;
+		fn2.weight     = helpers::getRawPointer(this->m_wTransBuff)+ 
+		                 this->m_wTransBuffShiftToDim;
+		fn2.weightOut  = helpers::getRawPointer(this->m_wTransBuff)+ 
+		                 this->m_wTransBuffShiftToDim + 2;
+		thrust::for_each(
+				 thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0) + 2,
+				 fn2);
 
-	    fn2.featureDim = this->m_featureDim;
-	    fn2.weight     = helpers::getRawPointer(this->m_wTransBuff);
-	    fn2.weightOut  = helpers::getRawPointer(this->m_wTransBuff) + 2 * this->m_featureDim;
-	    thrust::for_each(
-			     thrust::counting_iterator<int>(0),
-			     thrust::counting_iterator<int>(0) + 2 * this->m_featureDim,
-			     fn2);
+	    }
 	}
     }
-    
+	
     // Just use the MDNUnit_mixture functions
     // initPreOutput
     // computeForward
@@ -3600,154 +3919,104 @@ namespace layers {
 	// step1: calculate the (W_k^T (t-1)_n_d + b_i)
 	{{
 		
-		thrust::fill(this->m_dataBuff.begin(), this->m_dataBuff.end(), (real_t)0.0);
-		this->m_paral     = this->m_precedingLayer.parallelSequences();
-		this->m_totalTime = this->m_precedingLayer.curMaxSeqLength() * this->m_paral;
+	     thrust::fill(this->m_dataBuff.begin(), this->m_dataBuff.end(), (real_t)0.0);
+	     this->m_paral     = this->m_precedingLayer.parallelSequences();
+	     this->m_totalTime = this->m_precedingLayer.curMaxSeqLength() * this->m_paral;
 
-		#ifdef MIXTUREDYNDIAGONAL
-		// one step to calculate wo_t1 + b, change the mean value
-		for (int stepBack    = 1; stepBack <= this->m_backOrder; stepBack++){
-		    internal::ShiftBiasStep1TiedCase fn2;
-		    fn2.startDOut    = this->m_startDimOut;
-		    fn2.featureDim   = this->m_featureDim;
-		    fn2.layerSizeOut = this->m_layerSizeTar;
-		    fn2.mixNum       = this->m_numMixture;
-		    fn2.totalTime    = this->m_totalTime;
-		    fn2.tieVar       = this->m_tieVar;
-		    fn2.targets      = helpers::getRawPointer(targets);
+             #ifdef MIXTUREDYNDIAGONAL		
+	     // Regressio on the time axis 
+	     // one step to calculate wo_t1 + b, change the mean value
+	     {{
+		if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT || 
+		    this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
+		    for (int stepBack    = 1; stepBack <= this->m_backOrder; stepBack++){
+			internal::ShiftBiasStep1TiedCase fn2;
+			fn2.startDOut    = this->m_startDimOut;
+			fn2.featureDim   = this->m_featureDim;
+			fn2.layerSizeOut = this->m_layerSizeTar;
+			fn2.mixNum       = this->m_numMixture;
+			fn2.totalTime    = this->m_totalTime;
+			fn2.tieVar       = this->m_tieVar;
+			fn2.targets      = helpers::getRawPointer(targets);
 		    
-		    if (this->m_tanhReg && this->m_backOrder < 3){
-			fn2.linearPart= helpers::getRawPointer(this->m_wTransBuff) + 
-			                (stepBack - 1 + 2) * this->m_featureDim;
-		    }else{
-			fn2.linearPart= this->m_weightsPtr + (stepBack-1) * this->m_featureDim;
-		    }
-		    
-		    fn2.biasPart     = this->m_weightsPtr + this->m_backOrder * this->m_featureDim;
-		    fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
-		    fn2.stepBack     = stepBack;
-
-		    fn2.trainableAPos= -1;   // this is not useful for mxiture_dynSqr
-		    fn2.trainableBPos= -1;   // this is not useful for mxiture_dynSqr
-		
-		    
-		    int n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
-		    thrust::for_each(thrust::counting_iterator<int>(0),
-				     thrust::counting_iterator<int>(0)+n,
-				     fn2);
-		}
-		
-		#else
-		// step1.1 get the data corresponding to this unit
-		internal::CopyTargetData fn;
-		fn.startDOut   = this->m_startDimOut;
-		fn.featureDim  = this->m_featureDim;
-		fn.layerSizeOut= this->m_layerSizeTar;
-		
-		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
-		fn.output    = helpers::getRawPointer(targets);
-		fn.target    = helpers::getRawPointer(this->m_dataBuff) + 
-		    this->m_maxTime * this->m_featureDim * this->m_numMixture + 
-		    this->m_featureDim * this->m_paral;   // shift by 1 time
-		
-		int n  = (this->m_precedingLayer.curMaxSeqLength() - 1);
-		n =  n * this->m_precedingLayer.parallelSequences();
-		n =  n * this->m_featureDim;
-
-		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+n,
-				 fn);		
-		/*
-		#ifdef DEBUG_LOCAL
-		Cpu::real_vector tmp1 = targets;
-		Cpu::real_vector tmp2 = this->m_dataBuff;
-		printf("\n"); real_t sum1 = 0.0; real_t sum2 = 0.0;
-		for (int i = 0; i < ( n / this->m_featureDim); i++){
-		    for (int j = 0; j < this->m_featureDim; j++){			
-			int pos_data1 = (fn.layerSizeOut * i)+fn.startDOut+j;
-			int pos_data2 = i*this->m_featureDim + j + 
-			    this->m_maxTime * this->m_featureDim * this->m_numMixture + 
-			    this->m_featureDim * this->m_paral;
-			sum1 += tmp1[pos_data1]; sum2 += tmp2[pos_data2];
-		    }
-		}
-		printf("\nCopyTarget %f %f\n", sum1, sum2);
-                #endif
-		*/
-
-		// step1.2 transform
-		helpers::Matrix<TDevice> weightsMatrix(this->m_weights,
-						       this->m_featureDim * this->m_numMixture,
-						       this->m_featureDim,
-						       this->m_weightStart);
-		helpers::Matrix<TDevice> targetsMat(&this->m_dataBuff, this->m_featureDim,
-						    this->m_totalTime,
-						    this->m_maxTime * this->m_featureDim * 
-						    this->m_numMixture
-						    );
-		helpers::Matrix<TDevice> transformed(&this->m_dataBuff,  
-						     this->m_featureDim * this->m_numMixture,
-						     this->m_totalTime);
-		transformed.assignProduct(weightsMatrix, false, targetsMat, false);
-		
-		/*
-		#ifdef DEBUG_LOCAL
-		Cpu::real_vector mat1 = (*this->m_weights);
-		Cpu::real_vector mat2 = this->m_dataBuff;
-		real_t sum3 = 0.0;
-		real_t sum4 = 0.0;
-		for (int i = 0; i < this->m_featureDim; i++){
-		    if (i % 10 == 0)
-			printf("\n");
-		    printf("%f\t", mat1[i]);
-		}
-		for (int i = 0; i < this->m_totalTime; i++){
-		    for (int j =0; j < (this->m_featureDim * this->m_numMixture); j++){
-			real_t tmp=0.0;
-			for (int k = 0; k< this->m_featureDim; k++){
-			    tmp += mat1[k+j*this->m_featureDim + this->m_weightStart] * 
-				mat2[k+i*this->m_featureDim+this->m_maxTime * this->m_featureDim * 
-				     this->m_numMixture];
-			    if (mat1[k+j*this->m_featureDim + this->m_weightStart] 
-				!= mat1[k+j*this->m_featureDim + this->m_weightStart]){
-				printf("Detect Nan");
-			    }
+			if (this->m_tanhReg && this->m_backOrder < 3){
+			    fn2.linearPart = helpers::getRawPointer(this->m_wTransBuff) + 
+				             (stepBack - 1 + 2) * this->m_featureDim;
+			}else{
+			    fn2.linearPart = this->m_weightsPtr 
+				             +(stepBack-1) * this->m_featureDim;
 			}
-			//printf("%f\t", tmp-mat2[i*this->m_featureDim * this->m_numMixture+j]);
-			sum3 += tmp;
-			if (sum3 != sum3){
-			    printf("Detect Nan ");
-			}
-			sum4 += mat2[i*this->m_featureDim * this->m_numMixture+j];
+		    
+			fn2.biasPart     = this->m_weightsPtr + 
+			                   this->m_backOrder*this->m_featureDim;
+			
+			fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+			fn2.stepBack     = stepBack;
+			
+			fn2.trainableAPos= -1;   // this is useful for mxiture_dynSqr
+			fn2.trainableBPos= -1;   // this is useful for mxiture_dynSqr
+		
+			
+			int n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
+			thrust::for_each(thrust::counting_iterator<int>(0),
+					 thrust::counting_iterator<int>(0)+n,
+					 fn2);
 		    }
 		}
-		printf("Transform %f %f\n", sum3, sum4);
-		#endif*/
+	    }}
+	    {{
+		// Regressio on the dimension axis
+		if(this->m_dynDirection == MDNUNIT_TYPE_1_DIRECD || 
+		   this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB){
+		   
+		    
+		    for (int stepBack    = 1; stepBack <= this->m_backOrder; stepBack++){
+			internal::ShiftBiasStep1TiedCaseDimensionAxis fn2;
+			
+			fn2.startDOut    = this->m_startDimOut;
+			fn2.featureDim   = this->m_featureDim;
+			fn2.layerSizeOut = this->m_layerSizeTar;
+			fn2.mixNum       = this->m_numMixture;
+			fn2.totalTime    = this->m_totalTime;
+			fn2.tieVar       = this->m_tieVar;
+			fn2.targets      = helpers::getRawPointer(targets);
+			
+			if (this->m_tanhReg && this->m_backOrder < 3){
+			    fn2.linearPart = helpers::getRawPointer(this->m_wTransBuff) + 
+				             (stepBack - 1 + 2)  +
+				             this->m_wTransBuffShiftToDim;
+			}else{
+			    fn2.linearPart = this->m_weightsPtr + this->m_weightShiftToDim
+				             + (stepBack-1);
+			}
+		    
+			fn2.biasPart     = this->m_weightsPtr + this->m_weightShiftToDim + 
+			                   this->m_backOrder;
+			
+			fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+			fn2.stepBack     = stepBack;
+			
+			fn2.trainableAPos= -1;   // this is useful for mxiture_dynSqr
+			fn2.trainableBPos= -1;   // this is useful for mxiture_dynSqr
 		
-		// step1.3 shift by the bias and change the mean value
-		// Update the mean value as mu+wx+b
-		internal::ShiftBiasStep1 fn2;
-		fn2.featureDim   = this->m_featureDim;
-		fn2.mixNum       = this->m_numMixture;
-		fn2.totalTime    = this->m_totalTime;
-		
-		fn2.linearPart   = helpers::getRawPointer(this->m_dataBuff);
-		fn2.biasPart     = this->m_weightsPtr  + 
-		                   this->m_featureDim * this->m_featureDim * this->m_numMixture;
-
-		fn2.trainableAPos= -1;   // this is not useful for mxiture_dynSqr
-		fn2.trainableBPos= -1;   // this is not useful for mxiture_dynSqr
-
-		fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
-		n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
-		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+n,
-				 fn2);
-		#endif
+			
+			int n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
+			thrust::for_each(thrust::counting_iterator<int>(0),
+					 thrust::counting_iterator<int>(0)+n,
+					 fn2);
+		    }
+		    
+		}
+	    }}
+		 
+            #else
+	    // This block is used for AR model based on matrix transformation
+	    //  x - Ax_t-1 - b
+	    // Block dustbin.txt/0824x01
+            #endif
 	}}
 	
-	// Calculate the Error
-	// just directly call the conventional methods
+	// Calculate the Error, just directly call the conventional methods
 	return this->MDNUnit_mixture<TDevice>::calculateError(targets);
 	
     }                
@@ -3760,7 +4029,24 @@ namespace layers {
 	
 	#ifdef MIXTUREDYNDIAGONAL
 	{{
+	    // Graidents computation:
+	    // for \delta{L}/\delta{a_k} = 
+	    // \sum_t^{T}\sum_m_^{M}phi(t,m)(o_t,d - \hat{mu}_t,d^m) / var_t,d^{m}^2 * o_t-k,d
+	    // t: time
+	    // m: mixture
+	    // k: k-th order of AR model
+	    // d: dimension
+	    // phi(t,m): posterior of mixture at time t
+	    // \hat{mu}: the mean transformed by AR
+	    //
+	    // Step1: calculate the gradient for each t, m, d, k
+	    // Step2: sum
 		
+	    // gradient for the AR on time axis
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT || 
+		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB){
+
+		// step.1 calculate the gradient
 		if (this->m_tanhReg){
 		    internal::ShiftBiasStep2TiedCaseAutoReg fn2;
 		    fn2.featureDim   = this->m_featureDim;
@@ -3803,15 +4089,20 @@ namespace layers {
 				     thrust::counting_iterator<int>(0)+n,
 				     fn2);
 		}
-		// bias part
-		thrust::fill(this->m_oneVec.begin(),this->m_oneVec.end(), 
+		
+		
+		// step2 update the gradients for W	
+		/*************************************************
+		 * Why did I use 1.0 / this->m_numMixture * this->m_totalTime ?
+		 * But it turns out this learning rate works better !
+		 *************************************************/
+		// thrust::fill(this->m_oneVec.begin(), this->m_oneVec.end(), 1.0);
+		thrust::fill(this->m_oneVec.begin(), this->m_oneVec.end(), 
 			     1.0/this->m_numMixture * this->m_totalTime);
 		
 		helpers::Matrix<TDevice> onevec  (&this->m_oneVec, 
 						  this->m_numMixture * this->m_totalTime, 
 						  1);
-		
-		// step2 update the gradients for W
 		helpers::Matrix<TDevice> diffW   (&this->m_dataBuff, 
 						  this->m_featureDim * this->m_backOrder,
 						  this->m_totalTime * this->m_numMixture);
@@ -3820,12 +4111,12 @@ namespace layers {
 						  1,
 						  this->m_weightStart
 						  );
+		// sum the gradients
 		gradW.assignProduct(diffW, false, onevec, false);
 		
-		
-		/** FATAL ERROR 
+		/******************* FATAL ERROR ******************
 		 *  Remember to shift the gradb
-		 **/
+		 **************************************************/
 		// point to the weightUpdates of bias part
 		helpers::Matrix<TDevice> diffB   (&this->m_dataBuff, 
 						  this->m_featureDim,
@@ -3838,161 +4129,101 @@ namespace layers {
 						  this->m_weightStart + 
 						  this->m_featureDim * this->m_backOrder
 						  );
+		// sum the gradients
 		gradb.assignProduct(diffB, false, onevec, false);
+
+	    }
+
+	    // gradient for the AR on dimension axis
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECD || 
+		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB){
 		
+		
+		if (this->m_tanhReg){
+		    internal::ShiftBiasStep2TiedCaseAutoRegDimensionAxis fn2;
+		    fn2.featureDim   = this->m_featureDim;
+		    fn2.mixNum       = this->m_numMixture;
+		    fn2.totalTime    = this->m_totalTime;
+		    fn2.startDOut    = this->m_startDimOut;
+		    fn2.layerSizeOut = this->m_layerSizeTar;
+		    fn2.transBuff    = helpers::getRawPointer(this->m_wTransBuff) + 
+			               this->m_wTransBuffShiftToDim;
+		    fn2.gradBuf      = helpers::getRawPointer(this->m_dataBuff);
+		    fn2.target       = helpers::getRawPointer(targets);
+		    fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		    fn2.postPbuff    = helpers::getRawPointer(this->m_tmpPat);
+		    fn2.tieVar       = this->m_tieVar;
+		    fn2.backOrder    = this->m_backOrder;
+		
+		    int n =  this->m_backOrder  * this->m_totalTime * 
+			     this->m_numMixture * this->m_featureDim;
+		    thrust::for_each(thrust::counting_iterator<int>(0),
+				     thrust::counting_iterator<int>(0)+n,
+				     fn2);
+		}else{
+		    internal::ShiftBiasStep2TiedCaseDimensionAxis fn2;
+		
+		    fn2.featureDim   = this->m_featureDim;
+		    fn2.mixNum       = this->m_numMixture;
+		    fn2.totalTime    = this->m_totalTime;
+		    fn2.startDOut    = this->m_startDimOut;
+		    fn2.layerSizeOut = this->m_layerSizeTar;
+		    
+		    fn2.gradBuf      = helpers::getRawPointer(this->m_dataBuff);
+		    fn2.target       = helpers::getRawPointer(targets);
+		    fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		    fn2.postPbuff    = helpers::getRawPointer(this->m_tmpPat);
+		    fn2.tieVar       = this->m_tieVar;
+		    fn2.backOrder    = this->m_backOrder;
+		
+		    int n =  this->m_backOrder  * this->m_totalTime * 
+			this->m_numMixture * this->m_featureDim;
+		    thrust::for_each(thrust::counting_iterator<int>(0),
+				     thrust::counting_iterator<int>(0)+n,
+				     fn2);
+		}
+	    	
+		// step2 update the gradients for W    
+		thrust::fill(this->m_oneVec.begin(), this->m_oneVec.end(), 
+			     1.0/this->m_numMixture * this->m_totalTime);
+		helpers::Matrix<TDevice> onevec  (&this->m_oneVec, 
+						  this->m_numMixture * this->m_totalTime 
+						  * this->m_featureDim, 
+						  1);
+		helpers::Matrix<TDevice> diffW   (&this->m_dataBuff, 
+						  this->m_backOrder,
+						  this->m_featureDim * 
+						  this->m_totalTime  * this->m_numMixture);
+		helpers::Matrix<TDevice> gradW   (this->m_weightUpdates, 
+						  this->m_backOrder,
+						  1,
+						  this->m_weightStart + this->m_weightShiftToDim
+						  );
+		gradW.assignProduct(diffW, false, onevec, false);
+		
+		/******************* FATAL ERROR ******************
+		 *  Remember to shift the gradb
+		 **************************************************/
+		// point to the weightUpdates of bias part
+		helpers::Matrix<TDevice> diffB   (&this->m_dataBuff, 
+						  1,
+						  this->m_featureDim * 
+						  this->m_totalTime * this->m_numMixture,
+						  this->m_totalTime * this->m_numMixture *
+						  this->m_backOrder * this->m_featureDim);
+		helpers::Matrix<TDevice> gradb   (this->m_weightUpdates, 
+						  1, 
+						  1,
+						  this->m_weightStart + 
+						  this->m_weightShiftToDim + 
+						  this->m_backOrder
+						  );
+		gradb.assignProduct(diffB, false, onevec, false);
+	    }	
 	
 	}}
 	#else
-	// calculate the weightUpdate for this->m_weights
-	{{
-		// step1, prepare the (x - (u+wx+b)) part
-		internal::ShiftBiasStep2 fn2;
-		#ifdef DEBUG_LOCAL
-		Cpu::real_vector mat1 = (*this->m_weights);
-		Cpu::real_vector mat2 = this->m_dataBuff;
-		#endif
-		
-		
-		fn2.featureDim   = this->m_featureDim;
-		fn2.mixNum       = this->m_numMixture;
-		fn2.totalTime    = this->m_totalTime;
-		fn2.startDOut    = this->m_startDimOut;
-		fn2.layerSizeOut = this->m_layerSizeTar;
-
-		fn2.linearPart   = helpers::getRawPointer(this->m_dataBuff);
-		fn2.biasPart     = this->m_weightsPtr + 
-		                   this->m_featureDim * this->m_featureDim * this->m_numMixture;
-		fn2.target       = helpers::getRawPointer(targets);
-		fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
-		fn2.postPbuff    = helpers::getRawPointer(this->m_tmpPat);
-		fn2.tieVar       = this->m_tieVar;
-		int n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
-		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+n,
-				 fn2);
-
-		
-		
-		#ifdef DEBUG_LOCAL
-		Cpu::real_vector mat3 = this->m_paraVec;
-		Cpu::real_vector mat5 = this->m_dataBuff;
-		Cpu::real_vector mat6 = *this->m_weights;
-		Cpu::real_vector mat7 = this->m_tmpPat;
-		Cpu::real_vector mat8 = targets;
-		printf("\bShiftBias\n");
-		for (int idx = 0; idx < this->m_featureDim; idx++){
-		    printf("%f\t", mat5[this->m_featureDim * this->m_numMixture + idx]);
-		    if (idx % 10 ==9)
-			printf("\n");
-		}
-		if (this->m_totalTime < 100){
-		for (int idx = this->m_featureDim * this->m_numMixture; 
-		     idx < this->m_featureDim * (this->m_numMixture + 1); 
-		     idx++){
-		    //break;
-		    int temp      = idx  % (fn2.featureDim * fn2.mixNum); 
-		    int featIndex = temp % fn2.featureDim; 
-		    int timeStep  = idx  / (fn2.featureDim * fn2.mixNum); 
-		    int mixIndex  = temp / fn2.featureDim;
-		    
-		    int pos_mean, pos_var, pos_data;
-		    // Add to the mean value
-		    pos_mean = (fn2.totalTime * fn2.mixNum + 
-				timeStep  * fn2.featureDim * fn2.mixNum + 
-				mixIndex  * fn2.featureDim + featIndex); 
-		    if (timeStep == 0){
-			continue;
-		    }else{
-			/*
-			mat3[pos_mean] = (mat3[pos_mean] + 
-					  mat2[idx]   + 
-					  mat6[this->m_weightStart + 
-					       this->m_featureDim * 
-					       this->m_featureDim * this->m_numMixture + featIndex]
-					       );*/
-		    }
-		    
-		    pos_var  = (fn2.totalTime * (fn2.mixNum + fn2.mixNum * fn2.featureDim)    + 
-				timeStep  *  fn2.mixNum * (fn2.tieVar ? 1 : fn2.featureDim) + 
-				mixIndex  * (fn2.tieVar ? 1 : fn2.featureDim)        +
-				(fn2.tieVar ? 0 : featIndex)); 
-		    
-		    // pointer to the posterior P and sum of posterior P
-		    
-		    const real_t postP   = mat7[timeStep  * fn2.mixNum + mixIndex];
-		    const real_t sumPost = mat7[fn2.totalTime * fn2.mixNum + timeStep];
-		    real_t posterior = std::exp((postP) - (sumPost));
-		    
-		    // point to the targets data x
-		    pos_data = (fn2.layerSizeOut * timeStep) + fn2.startDOut + featIndex;
-	    
-		    // save x - u - wx'-b to dataBuff now
-		    real_t resu = (-1 * posterior * (mat8[pos_data] - mat3[pos_mean]) 
-				   / mat3[pos_var] / mat3[pos_var]);
-		    printf("%f %f %f %f\t", mat8[pos_data], mat3[pos_mean], mat3[pos_var], resu);
-		    
-		    
-		    // save \phi(i)\sigma()(x-u-wx'-b) in time order
-		    //pos_data = (mixIndex * fn2.totalTime + timeStep)*fn2.featureDim + featIndex; 
-		    //mat4[pos_data] = -1* posterior * mat3[pos_var] * (mat5[idx]);
-		    
-		}}
-		printf("\n");
-		#endif
-	}}
-
-	{{
-	    // step2 update the gradients
-	    helpers::Matrix<TDevice> diffData(&this->m_dataBuff, 
-					      this->m_numMixture * this->m_featureDim,
-					      this->m_totalTime);
-	    helpers::Matrix<TDevice> tartData(&this->m_dataBuff, this->m_featureDim,
-					      this->m_totalTime,
-					      this->m_maxTime * this->m_featureDim * 
-					      this->m_numMixture
-					      );
-	    helpers::Matrix<TDevice> gradMat (this->m_weightUpdates, 
-					      this->m_numMixture * this->m_featureDim,
-					      this->m_featureDim,
-					      this->m_weightStart
-					      );
-	    gradMat.assignProduct(diffData, false, tartData, true);
-	    
-	    // bias part
-	    helpers::Matrix<TDevice> onevec  (&this->m_oneVec, 
-					      this->m_numMixture * this->m_totalTime, 1);
-	    // point to the weightUpdates of bias part
-	    helpers::Matrix<TDevice> gradBia (this->m_weightUpdates, 
-					      this->m_numMixture * this->m_featureDim, 1,
-					      this->m_weightStart + 
-					      this->m_featureDim * this->m_featureDim * 
-					      this->m_numMixture
-					      );
-	    gradBia.assignProduct(diffData, false, onevec, false);
-	}}
-	
-	#ifdef DEBUG_LOCAL
-	printf("\nGraidents to weights\n");
-	Cpu::real_vector tmp2= this->m_dataBuff;
-	Cpu::real_vector tmp = *this->m_weightUpdates;
-	Cpu::real_vector tmp3= *this->m_weights;
-	for (int i = 0; i < this->m_featureDim; i++){
-	    if (i % 5 == 0)
-		printf("\n");
-	    printf("%f %f %f %f %f\t", 
-		   tmp2[i + this->m_featureDim * this->m_numMixture], 
-		   tmp[i],
-		   tmp[i +
-			this->m_weightStart + 
-			this->m_featureDim  * this->m_featureDim * this->m_numMixture],
-		   tmp3[i+this->m_weightStart],
-		   tmp3[i +
-			this->m_weightStart + 
-			this->m_featureDim  * this->m_featureDim * this->m_numMixture]);
-	}
-	printf("\n");
-	#endif
-
+	// ./dustbin.txt/Block 0824x02
 	#endif
     }
     
@@ -4035,15 +4266,25 @@ namespace layers {
 	    tempRandom[i] = (dist(*gen));
 	randomSeedBuff = tempRandom;	
 	
-
-	// get the MDN parameter (can only do it frame by frame now)
+	
+	// get the MDN parameter 
 	int startPos = 0;
 	int endPos   = 0;
 	for (int i = 0; i < time; i++)
 	{{
-
+	    
+	    // Step1. for each time step, change the mean of the distribution
+	    // Note:
+	    //    computeForwardPass() is conducted before getOutput()
+	    //    hence, no need to transform the tanh(alpha) to AR parameter
+	    
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT || 
+		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
+		
+		// AR along the time axis
 		for (int stepBack = 1; stepBack <= this->m_backOrder; stepBack++){
-		  #ifdef MIXTUREDYNDIAGONAL
+		    
+                    #ifdef MIXTUREDYNDIAGONAL
 		    if (i >= stepBack){    
 			// one step to calculate wo_t1 + b, change the mean value
 			internal::ShiftBiasStep1TiedCase fn2;
@@ -4096,163 +4337,83 @@ namespace layers {
 			  real_t tmpResult = paraVec2[pos_mean] + 
 			  mWeight[this->m_weightStart + featIndex] * targetVec[pos_data] +
 			  mWeight[this->m_weightStart + this->m_featureDim + featIndex];
-			  printf("%f %f %f\t",paraVec2[timeStep*mixNum],paraVec2[timeStep*mixNum+1],
+			  printf("%f%f%f\t",paraVec2[timeStep*mixNum],paraVec2[timeStep*mixNum+1],
 			  paraVec2[timeStep*mixNum]+paraVec2[timeStep*mixNum+1]);
 			  //printf("%f\t", tmpResult);
 			}*/
 		    }
-		    
-		  #else
-		    /*
-		    thrust::fill(this->m_dataBuff.begin(), this->m_dataBuff.end(), (real_t)0.0);
-		    this->m_paral     = this->m_precedingLayer.parallelSequences();
-		    
-		    // step1.1 get the data corresponding to this unit
-		    internal::CopyTargetData fn;
-		    fn.startDOut   = this->m_startDimOut;
-		    fn.featureDim  = this->m_featureDim;
-		    fn.layerSizeOut= this->m_layerSizeTar;
-		
-		    fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
-		    fn.output    = targets;
-		    fn.target    = helpers::getRawPointer(this->m_dataBuff) + 
-			this->m_maxTime * this->m_featureDim * this->m_numMixture + 
-			this->m_featureDim * this->m_paral; // shift by 1 time to the currennt time
-		    
-		    // pointer to the previous generated data
-		    startPos    = (i-1) * datapointerperFrame;
-		    endPos      = (i)   * datapointerperFrame;
-		    
-		    thrust::for_each(thrust::counting_iterator<int>(0) + startPos,
-				     thrust::counting_iterator<int>(0) + endPos,   fn);		   
-		    
-		    #ifdef DEBUG_LOCAL
-		    internal::CopySimple2 fn4;
-		    real_vector target_temp(datapoint, 0.0);
-		    fn4.Output = helpers::getRawPointer(target_temp);
-		    fn4.in     = targets;
-		    thrust::for_each(thrust::counting_iterator<int>(0),
-				     thrust::counting_iterator<int>(0)+ datapoint, fn4);
-		    Cpu::real_vector target_temp2 = target_temp;
+		    #else
+		    // Block 0824x03
 		    #endif
-		    
-		    // pointer to the current data frame
-		    startPos    = (i)  * datapointerperFrame;
-		    endPos      = (i+1)* datapointerperFrame;
-
-		    // step1.2 transform
-		    helpers::Matrix<TDevice> weightsMatrix(this->m_weights,
-							   this->m_featureDim * this->m_numMixture,
-							   this->m_featureDim,
-							   this->m_weightStart);
-		    helpers::Matrix<TDevice> targetsMat(&this->m_dataBuff, this->m_featureDim,
-							this->m_paral,
-							this->m_maxTime * this->m_featureDim * 
-							this->m_numMixture + startPos
-							);
-		    helpers::Matrix<TDevice> transformed(&this->m_dataBuff,  
-							 this->m_featureDim * this->m_numMixture,
-							 this->m_paral,
-							 startPos *  this->m_numMixture
-							 );
-		    transformed.assignProduct(weightsMatrix, false, targetsMat, false);
-		    
-		    #ifdef DEBUG_LOCAL		    		    
-		    Cpu::real_vector mat1 = (*this->m_weights);
-		    Cpu::real_vector mat2 = this->m_dataBuff;
-		    Cpu::real_vector mat3 = this->m_paraVec;
-		    real_t sum3 = 0.0;
-		    real_t sum4 = 0.0;
-		    for (int j =0; j < (this->m_featureDim * this->m_numMixture); j++){
-			real_t tmp=0.0;
-			for (int k = 0; k< this->m_featureDim; k++){
-			    tmp += mat1[j + 
-					k * this->m_featureDim * this->m_numMixture + 
-					this->m_weightStart] * 
-				mat2[k+i*this->m_featureDim+this->m_maxTime * this->m_featureDim * 
-				     this->m_numMixture];
-			}
-			//printf("%f\t", tmp-mat2[i*this->m_featureDim * this->m_numMixture+j]);
-			sum3 += tmp;
-			sum4 += mat2[i*this->m_featureDim * this->m_numMixture+j];
-		    }
-		    printf("Transform %f %f\n", sum3, sum4);
-		    #endif
-
-		    // step1.3 shift by the bias and change the mean value
-		    // Update the mean value as mu+wx+b
-		    internal::ShiftBiasStep1 fn2;
-		    fn2.featureDim   = this->m_featureDim;
-		    fn2.mixNum       = this->m_numMixture;
-		    fn2.totalTime    = time * this->m_precedingLayer.parallelSequences();
-		    
-		    fn2.linearPart   = helpers::getRawPointer(this->m_dataBuff);
-		    fn2.biasPart     = this->m_weightsPtr  + 
-			this->m_featureDim * this->m_featureDim * this->m_numMixture;
-		
-		    fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
-		    
-		    // pointer tot the w^k O + b
-		    startPos  *=  this->m_numMixture;
-		    endPos    *=  this->m_numMixture;
-
-		    thrust::for_each(thrust::counting_iterator<int>(0)+startPos,
-				     thrust::counting_iterator<int>(0)+endPos,
-				     fn2);
-		    
-		    #ifdef DEBUG_LOCAL
-		    Cpu::real_vector mat4 = this->m_paraVec;
-		    real_t sum = 0.0;
-		    for (int idx = startPos; idx < endPos; idx++){
-			int temp = idx % (fn2.featureDim * fn2.mixNum);
-			int featIndex = temp % (fn2.featureDim);
-			int timeStep  = idx / (fn2.featureDim * fn2.mixNum);
-			int mixIndex  = temp/ fn2.featureDim;
-
-			int index = fn2.totalTime * fn2.mixNum + 
-			    timeStep * fn2.featureDim * fn2.mixNum + 
-			    mixIndex * fn2.featureDim + featIndex;
-			int index2 = mixIndex * fn2.featureDim + featIndex;
-			real_t mean1 = mat4[index];
-			real_t mean2 = mat3[index];
-			real_t tmp = (mat3[index] + mat2[idx] + 
-					      mat1[index2 + 
-						   this->m_featureDim * 
-						   this->m_featureDim * 
-						   this->m_numMixture]);
-			real_t tmp2 = mat4[index] - tmp;
-			printf("%f %f\t", tmp2, tmp);
-			sum += tmp2*tmp2;
-		    }
-		    printf("\n");
-		    #endif
-		    */
-		  #endif
 		}
-		
-		internal::SamplingMixture fn;
-		fn.featureDim   = this->m_featureDim;
-		fn.layerSizeOut = this->m_layerSizeTar;
-		fn.startDOut    = this->m_startDimOut;
-		fn.mixtureNum   = this->m_numMixture;
-		fn.totalTime    = time * this->m_precedingLayer.parallelSequences();
-		fn.para         = para;
-		fn.paraPtr      = ( (this->m_varScale.size()>0) ?
-				    (helpers::getRawPointer(this->m_varScale)) : NULL );
-		fn.targets      = helpers::getRawPointer(targets);
-		fn.mdnPara      = helpers::getRawPointer(this->m_paraVec);
-		fn.tieVar       = this->m_tieVar;
+	    }
 
-		startPos    = i     * datapointerperFrame;
-		endPos      = (i+1) * datapointerperFrame;
-		thrust::for_each(
-  			 thrust::make_zip_iterator(
-			     thrust::make_tuple(randomSeedBuff.begin() + startPos, 
-						thrust::counting_iterator<int>(0)+ startPos)),
-		         thrust::make_zip_iterator(
-			     thrust::make_tuple(randomSeedBuff.begin() + endPos, 
-						thrust::counting_iterator<int>(0)+endPos)),
-						fn);
+	    // AR along the dimension axis
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECD || 
+		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
+		// ??? this is only for the sampling with a small ratio for variance
+		// 
+		for (int stepBack = 1; stepBack <= this->m_backOrder; stepBack++){
+		    internal::ShiftBiasStep1TiedCaseDimensionAxis fn2;
+		    fn2.startDOut    = this->m_startDimOut;
+		    fn2.featureDim   = this->m_featureDim;
+		    fn2.layerSizeOut = this->m_layerSizeTar;
+		    fn2.mixNum       = this->m_numMixture;
+		    fn2.totalTime    = this->m_totalTime;
+		    fn2.targets      = helpers::getRawPointer(targets);
+		    
+		    if (this->m_tanhReg && this->m_backOrder < 3){
+			fn2.linearPart = helpers::getRawPointer(this->m_wTransBuff) + 
+			                (stepBack - 1 + 2)  + this->m_wTransBuffShiftToDim;
+		    }else{
+			fn2.linearPart = this->m_weightsPtr + this->m_weightShiftToDim
+			    + (stepBack-1);
+		    }
+		    
+		    fn2.biasPart     = this->m_weightsPtr + this->m_weightShiftToDim + 
+			               this->m_backOrder;
+		    
+		    fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		    fn2.stepBack     = stepBack;
+			
+		    fn2.trainableAPos= -1;   // this is useful for mxiture_dynSqr
+		    fn2.trainableBPos= -1;   // this is useful for mxiture_dynSqr
+		
+		    // No choice but iteration. This is an IIR filter
+		    for (int featDimIdx = 0; featDimIdx < this->m_featureDim; featDimIdx++){
+			startPos = i * this->m_numMixture * this->m_featureDim + featDimIdx;
+			endPos   = i * this->m_numMixture * this->m_featureDim + featDimIdx + 1;
+			thrust::for_each(thrust::counting_iterator<int>(0)+startPos,
+					 thrust::counting_iterator<int>(0)+endPos,
+					 fn2);
+		    }
+		}
+	    }
+
+	    // Step2. Sampling
+	    internal::SamplingMixture fn;
+	    fn.featureDim   = this->m_featureDim;
+	    fn.layerSizeOut = this->m_layerSizeTar;
+	    fn.startDOut    = this->m_startDimOut;
+	    fn.mixtureNum   = this->m_numMixture;
+	    fn.totalTime    = time * this->m_precedingLayer.parallelSequences();
+	    fn.para         = para;
+	    fn.paraPtr      = ( (this->m_varScale.size()>0) ?
+				(helpers::getRawPointer(this->m_varScale)) : NULL );
+	    fn.targets      = helpers::getRawPointer(targets);
+	    fn.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+	    fn.tieVar       = this->m_tieVar;
+
+	    startPos    = i     * datapointerperFrame;
+	    endPos      = (i+1) * datapointerperFrame;
+	    thrust::for_each(
+		  thrust::make_zip_iterator(
+			thrust::make_tuple(randomSeedBuff.begin() + startPos, 
+					   thrust::counting_iterator<int>(0)+ startPos)),
+		  thrust::make_zip_iterator(
+			thrust::make_tuple(randomSeedBuff.begin() + endPos, 
+					   thrust::counting_iterator<int>(0)+endPos)),
+		  fn);
 	}}	
 	
     }
@@ -4270,11 +4431,13 @@ namespace layers {
 		    printf("\tNow, the parameter will be sampled with ratio=0.01.");
 		}else{
 		    printf("\n\tGenerating the parameter sequence based on sampling\n");
-		    real_vector tmpOutput(this->m_featureDim * 
-					  this->m_precedingLayer.maxSeqLength() * 
-					  this->m_precedingLayer.parallelSequences(), 0.0);
-		    this->getOutput(0.01, tmpOutput);
+		    
 		}
+		real_vector tmpOutput(this->m_featureDim * 
+				      this->m_precedingLayer.maxSeqLength() * 
+				      this->m_precedingLayer.parallelSequences(), 0.0);
+		this->getOutput(0.01, tmpOutput);
+		
 	}}
 
 	// Step2. get the parameters

@@ -303,6 +303,7 @@ namespace layers{
 	int          m_paral;               // number of utterances in parallel 
 	int          m_totalTime;           // m_curMaxLength * m_paral
 	int          m_backOrder;           // y[t] - y[t-1] - ... - [y-m_backOrder]
+
     public:
 	MDNUnit_mixture_dyn(int startDim, int endDim, int startDimOut, int endDimOut, 
 			    int type, Layer<TDevice> &precedingLayer, int outputSize,
@@ -348,12 +349,15 @@ namespace layers{
     protected:
 	int        m_a_pos;                 // the start position of the trainable a
 	int        m_b_pos;                 // the start position of the trainable b
+	int        m_backOrder;           // y[t] - y[t-1] - ... - [y-m_backOrder]
+	int        m_tanhReg;             // whether use tanh to transform the weight as tanh(w)
 
     public:
 
 	MDNUnit_mixture_dynSqr(int startDim, int endDim, int startDimOut, int endDimOut, 
 			       int type, Layer<TDevice> &precedingLayer, int outputSize,
-			       const bool tieVar, const int trainable = MDNUNIT_TYPE_2);
+			       const bool tieVar, const int backOrder, 
+			       const int trainable = MDNUNIT_TYPE_2);
 	
 	virtual       ~MDNUnit_mixture_dynSqr();
 	

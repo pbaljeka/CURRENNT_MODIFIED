@@ -359,9 +359,9 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
        -3.0 is chosen for convience.
        
        < -3.0: no MDN generation
-       > -3.0 && < -2.0: generating EM-style
-       > -2.0 && < 0: generate MDN parameters (mdnoutput = -1.0)
-       >0 : generate samples from MDN with the variance = variance * mdnoutput */
+       > -3.0 && < -1.5: generating EM-style
+       > -1.5 && < 0.0: generate MDN parameters (mdnoutput = -1.0)
+       > 0.0 : generate samples from MDN with the variance = variance * mdnoutput */
 
     if (mdnoutput >= -3.0 && getGateOutput){
 	genMethod = ERROR;
@@ -443,7 +443,8 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
 
 
 /* Add 16-02-22 Wang: for WE updating */
-// Initialization for using external we bank
+// Initialization for using external WE bank
+// (read in the word embeddings and save them in a matrix)
 template <typename TDevice>
 bool NeuralNetwork<TDevice>::initWeUpdate(const std::string weBankPath, const unsigned weDim, 
 					  const unsigned weIDDim, const unsigned maxLength)
@@ -621,6 +622,7 @@ void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc,
 	BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
 	    layers::TrainableLayer<TDevice>* Layer = 
 		dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	    // Read in the parameter for a hidden layer
 	    if (Layer && tempctrStr[cnt] > 0){
 		printf("%d ", cnt);
 		layers::LstmLayerCharW<TDevice>* LstmCharWLayer = 
@@ -631,6 +633,7 @@ void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc,
 		}else{
 		    Layer->reReadWeight(weightsSection, Layer->size());
 		}
+	    // Read in the parameter for MDN layer with trainable link
 	    }else if(tempctrStr[cnt] > 0){
 		layers::MDNLayer<TDevice>* mdnlayer = 
 		    dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
@@ -649,6 +652,7 @@ void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc,
     }
 }
 
+
 template <typename TDevice>
 Cpu::real_vector NeuralNetwork<TDevice>::getMdnConfigVec()
 {
@@ -660,6 +664,10 @@ Cpu::real_vector NeuralNetwork<TDevice>::getMdnConfigVec()
     }    
     return temp;
 }
+
+// PrintWeightMatrix
+// print the weight of a network to a binary data
+// use ReadCURRENNTWeight(filename,format,swap) matlab function to read the data
 template <typename TDevice>
 void NeuralNetwork<TDevice>::printWeightMatrix(const std::string weightPath)
 {
@@ -668,13 +676,8 @@ void NeuralNetwork<TDevice>::printWeightMatrix(const std::string weightPath)
     if (!ifs.good()){
 	throw std::runtime_error(std::string("Fail to open output weight path: "+weightPath));
     }
+
     // format of the output binary weight
-    // #Layers(Input)
-    // #Weights_layers1(Input)
-    // ...
-    // Weight_of_layer1 (float) ...
-    
-    // 
     std::vector<int> weightSize;
     weightSize.clear();
     BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
@@ -700,15 +703,18 @@ void NeuralNetwork<TDevice>::printWeightMatrix(const std::string weightPath)
 	}
     }
     
+    // macro information
+    // Number of layers
+    // weight size, layer size, preceding layer size, inputWeightsPerBlock, internalWeightsPerBlock
     real_t tmpPtr;
-    tmpPtr = (real_t)weightSize.size()/5;    //
+    tmpPtr = (real_t)weightSize.size()/5;
     ifs.write((char *)&tmpPtr, sizeof(real_t));
     for (int i = 0 ; i<weightSize.size(); i++){
 	tmpPtr = (real_t)weightSize[i];
 	ifs.write((char *)&tmpPtr, sizeof(real_t));
     }
 
-    // 
+    // weights
     real_t *tmpPtr2;
     Cpu::real_vector weightVec;
     BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){

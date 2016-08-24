@@ -1,0 +1,394 @@
+--------------------
+Block 0824x01:
+      // This block is used for AR model based on matrix transformation
+		//  x - Ax_t-1 - b
+		
+      // for full-matrix transformation (not used anymore)
+		// step1.1 get the data corresponding to this unit
+		internal::CopyTargetData fn;
+		fn.startDOut   = this->m_startDimOut;
+		fn.featureDim  = this->m_featureDim;
+		fn.layerSizeOut= this->m_layerSizeTar;
+		
+		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.output    = helpers::getRawPointer(targets);
+		fn.target    = helpers::getRawPointer(this->m_dataBuff) + 
+		    this->m_maxTime * this->m_featureDim * this->m_numMixture + 
+		    this->m_featureDim * this->m_paral;   // shift by 1 time
+		
+		int n  = (this->m_precedingLayer.curMaxSeqLength() - 1);
+		n =  n * this->m_precedingLayer.parallelSequences();
+		n =  n * this->m_featureDim;
+
+		thrust::for_each(thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0)+n,
+				 fn);		
+		/*
+		#ifdef DEBUG_LOCAL
+		Cpu::real_vector tmp1 = targets;
+		Cpu::real_vector tmp2 = this->m_dataBuff;
+		printf("\n"); real_t sum1 = 0.0; real_t sum2 = 0.0;
+		for (int i = 0; i < ( n / this->m_featureDim); i++){
+		    for (int j = 0; j < this->m_featureDim; j++){			
+			int pos_data1 = (fn.layerSizeOut * i)+fn.startDOut+j;
+			int pos_data2 = i*this->m_featureDim + j + 
+			    this->m_maxTime * this->m_featureDim * this->m_numMixture + 
+			    this->m_featureDim * this->m_paral;
+			sum1 += tmp1[pos_data1]; sum2 += tmp2[pos_data2];
+		    }
+		}
+		printf("\nCopyTarget %f %f\n", sum1, sum2);
+                #endif
+		*/
+
+		// step1.2 transform
+		helpers::Matrix<TDevice> weightsMatrix(this->m_weights,
+						       this->m_featureDim * this->m_numMixture,
+						       this->m_featureDim,
+						       this->m_weightStart);
+		helpers::Matrix<TDevice> targetsMat(&this->m_dataBuff, this->m_featureDim,
+						    this->m_totalTime,
+						    this->m_maxTime * this->m_featureDim * 
+						    this->m_numMixture
+						    );
+		helpers::Matrix<TDevice> transformed(&this->m_dataBuff,  
+						     this->m_featureDim * this->m_numMixture,
+						     this->m_totalTime);
+		transformed.assignProduct(weightsMatrix, false, targetsMat, false);
+		
+		/*
+		#ifdef DEBUG_LOCAL
+		Cpu::real_vector mat1 = (*this->m_weights);
+		Cpu::real_vector mat2 = this->m_dataBuff;
+		real_t sum3 = 0.0;
+		real_t sum4 = 0.0;
+		for (int i = 0; i < this->m_featureDim; i++){
+		    if (i % 10 == 0)
+			printf("\n");
+		    printf("%f\t", mat1[i]);
+		}
+		for (int i = 0; i < this->m_totalTime; i++){
+		    for (int j =0; j < (this->m_featureDim * this->m_numMixture); j++){
+			real_t tmp=0.0;
+			for (int k = 0; k< this->m_featureDim; k++){
+			    tmp += mat1[k+j*this->m_featureDim + this->m_weightStart] * 
+				mat2[k+i*this->m_featureDim+this->m_maxTime * this->m_featureDim * 
+				     this->m_numMixture];
+			    if (mat1[k+j*this->m_featureDim + this->m_weightStart] 
+				!= mat1[k+j*this->m_featureDim + this->m_weightStart]){
+				printf("Detect Nan");
+			    }
+			}
+			//printf("%f\t", tmp-mat2[i*this->m_featureDim * this->m_numMixture+j]);
+			sum3 += tmp;
+			if (sum3 != sum3){
+			    printf("Detect Nan ");
+			}
+			sum4 += mat2[i*this->m_featureDim * this->m_numMixture+j];
+		    }
+		}
+		printf("Transform %f %f\n", sum3, sum4);
+		#endif*/
+		
+		// step1.3 shift by the bias and change the mean value
+		// Update the mean value as mu+wx+b
+		internal::ShiftBiasStep1 fn2;
+		fn2.featureDim   = this->m_featureDim;
+		fn2.mixNum       = this->m_numMixture;
+		fn2.totalTime    = this->m_totalTime;
+		
+		fn2.linearPart   = helpers::getRawPointer(this->m_dataBuff);
+		fn2.biasPart     = this->m_weightsPtr  + 
+		                   this->m_featureDim * this->m_featureDim * this->m_numMixture;
+
+		fn2.trainableAPos= -1;   // this is not useful for mxiture_dynSqr
+		fn2.trainableBPos= -1;   // this is not useful for mxiture_dynSqr
+
+		fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
+		thrust::for_each(thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0)+n,
+				 fn2);
+
+--------------------
+Block 0824x02:
+      // calculate the weightUpdate for this->m_weights
+	{{
+		// step1, prepare the (x - (u+wx+b)) part
+		internal::ShiftBiasStep2 fn2;
+		#ifdef DEBUG_LOCAL
+		Cpu::real_vector mat1 = (*this->m_weights);
+		Cpu::real_vector mat2 = this->m_dataBuff;
+		#endif
+		
+		
+		fn2.featureDim   = this->m_featureDim;
+		fn2.mixNum       = this->m_numMixture;
+		fn2.totalTime    = this->m_totalTime;
+		fn2.startDOut    = this->m_startDimOut;
+		fn2.layerSizeOut = this->m_layerSizeTar;
+
+		fn2.linearPart   = helpers::getRawPointer(this->m_dataBuff);
+		fn2.biasPart     = this->m_weightsPtr + 
+		                   this->m_featureDim * this->m_featureDim * this->m_numMixture;
+		fn2.target       = helpers::getRawPointer(targets);
+		fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		fn2.postPbuff    = helpers::getRawPointer(this->m_tmpPat);
+		fn2.tieVar       = this->m_tieVar;
+		int n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
+		thrust::for_each(thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0)+n,
+				 fn2);
+
+		
+		
+		#ifdef DEBUG_LOCAL
+		Cpu::real_vector mat3 = this->m_paraVec;
+		Cpu::real_vector mat5 = this->m_dataBuff;
+		Cpu::real_vector mat6 = *this->m_weights;
+		Cpu::real_vector mat7 = this->m_tmpPat;
+		Cpu::real_vector mat8 = targets;
+		printf("\bShiftBias\n");
+		for (int idx = 0; idx < this->m_featureDim; idx++){
+		    printf("%f\t", mat5[this->m_featureDim * this->m_numMixture + idx]);
+		    if (idx % 10 ==9)
+			printf("\n");
+		}
+		if (this->m_totalTime < 100){
+		for (int idx = this->m_featureDim * this->m_numMixture; 
+		     idx < this->m_featureDim * (this->m_numMixture + 1); 
+		     idx++){
+		    //break;
+		    int temp      = idx  % (fn2.featureDim * fn2.mixNum); 
+		    int featIndex = temp % fn2.featureDim; 
+		    int timeStep  = idx  / (fn2.featureDim * fn2.mixNum); 
+		    int mixIndex  = temp / fn2.featureDim;
+		    
+		    int pos_mean, pos_var, pos_data;
+		    // Add to the mean value
+		    pos_mean = (fn2.totalTime * fn2.mixNum + 
+				timeStep  * fn2.featureDim * fn2.mixNum + 
+				mixIndex  * fn2.featureDim + featIndex); 
+		    if (timeStep == 0){
+			continue;
+		    }else{
+			/*
+			mat3[pos_mean] = (mat3[pos_mean] + 
+					  mat2[idx]   + 
+					  mat6[this->m_weightStart + 
+					       this->m_featureDim * 
+					       this->m_featureDim * this->m_numMixture+featIndex]
+					       );*/
+		    }
+		    
+		    pos_var  = (fn2.totalTime * (fn2.mixNum + fn2.mixNum * fn2.featureDim)    + 
+				timeStep  *  fn2.mixNum * (fn2.tieVar ? 1 : fn2.featureDim) + 
+				mixIndex  * (fn2.tieVar ? 1 : fn2.featureDim)        +
+				(fn2.tieVar ? 0 : featIndex)); 
+		    
+		    // pointer to the posterior P and sum of posterior P
+		    
+		    const real_t postP   = mat7[timeStep  * fn2.mixNum + mixIndex];
+		    const real_t sumPost = mat7[fn2.totalTime * fn2.mixNum + timeStep];
+		    real_t posterior = std::exp((postP) - (sumPost));
+		    
+		    // point to the targets data x
+		    pos_data = (fn2.layerSizeOut * timeStep) + fn2.startDOut + featIndex;
+	    
+		    // save x - u - wx'-b to dataBuff now
+		    real_t resu = (-1 * posterior * (mat8[pos_data] - mat3[pos_mean]) 
+				   / mat3[pos_var] / mat3[pos_var]);
+		    printf("%f %f %f %f\t", mat8[pos_data], mat3[pos_mean], mat3[pos_var], resu);
+		    
+		    
+		    // save \phi(i)\sigma()(x-u-wx'-b) in time order
+		    //pos_data = (mixIndex * fn2.totalTime + timeStep)*fn2.featureDim+featIndex; 
+		    //mat4[pos_data] = -1* posterior * mat3[pos_var] * (mat5[idx]);
+		    
+		}}
+		printf("\n");
+		#endif
+	}}
+
+	{{
+	    // step2 update the gradients
+	    helpers::Matrix<TDevice> diffData(&this->m_dataBuff, 
+					      this->m_numMixture * this->m_featureDim,
+					      this->m_totalTime);
+	    helpers::Matrix<TDevice> tartData(&this->m_dataBuff, this->m_featureDim,
+					      this->m_totalTime,
+					      this->m_maxTime * this->m_featureDim * 
+					      this->m_numMixture
+					      );
+	    helpers::Matrix<TDevice> gradMat (this->m_weightUpdates, 
+					      this->m_numMixture * this->m_featureDim,
+					      this->m_featureDim,
+					      this->m_weightStart
+					      );
+	    gradMat.assignProduct(diffData, false, tartData, true);
+	    
+	    // bias part
+	    helpers::Matrix<TDevice> onevec  (&this->m_oneVec, 
+					      this->m_numMixture * this->m_totalTime, 1);
+	    // point to the weightUpdates of bias part
+	    helpers::Matrix<TDevice> gradBia (this->m_weightUpdates, 
+					      this->m_numMixture * this->m_featureDim, 1,
+					      this->m_weightStart + 
+					      this->m_featureDim * this->m_featureDim * 
+					      this->m_numMixture
+					      );
+	    gradBia.assignProduct(diffData, false, onevec, false);
+	}}
+	
+	#ifdef DEBUG_LOCAL
+	printf("\nGraidents to weights\n");
+	Cpu::real_vector tmp2= this->m_dataBuff;
+	Cpu::real_vector tmp = *this->m_weightUpdates;
+	Cpu::real_vector tmp3= *this->m_weights;
+	for (int i = 0; i < this->m_featureDim; i++){
+	    if (i % 5 == 0)
+		printf("\n");
+	    printf("%f %f %f %f %f\t", 
+		   tmp2[i + this->m_featureDim * this->m_numMixture], 
+		   tmp[i],
+		   tmp[i +
+			this->m_weightStart + 
+			this->m_featureDim  * this->m_featureDim * this->m_numMixture],
+		   tmp3[i+this->m_weightStart],
+		   tmp3[i +
+			this->m_weightStart + 
+			this->m_featureDim  * this->m_featureDim * this->m_numMixture]);
+	}
+	printf("\n");
+	#endif
+
+
+--------------------
+Block 0824x03:
+		    /*
+		    thrust::fill(this->m_dataBuff.begin(), this->m_dataBuff.end(), (real_t)0.0);
+		    this->m_paral     = this->m_precedingLayer.parallelSequences();
+		    
+		    // step1.1 get the data corresponding to this unit
+		    internal::CopyTargetData fn;
+		    fn.startDOut   = this->m_startDimOut;
+		    fn.featureDim  = this->m_featureDim;
+		    fn.layerSizeOut= this->m_layerSizeTar;
+		
+		    fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		    fn.output    = targets;
+		    fn.target    = helpers::getRawPointer(this->m_dataBuff) + 
+			this->m_maxTime * this->m_featureDim * this->m_numMixture + 
+			this->m_featureDim * this->m_paral; // shift by 1 time to the currennt time
+		    
+		    // pointer to the previous generated data
+		    startPos    = (i-1) * datapointerperFrame;
+		    endPos      = (i)   * datapointerperFrame;
+		    
+		    thrust::for_each(thrust::counting_iterator<int>(0) + startPos,
+				     thrust::counting_iterator<int>(0) + endPos,   fn);		   
+		    
+		    #ifdef DEBUG_LOCAL
+		    internal::CopySimple2 fn4;
+		    real_vector target_temp(datapoint, 0.0);
+		    fn4.Output = helpers::getRawPointer(target_temp);
+		    fn4.in     = targets;
+		    thrust::for_each(thrust::counting_iterator<int>(0),
+				     thrust::counting_iterator<int>(0)+ datapoint, fn4);
+		    Cpu::real_vector target_temp2 = target_temp;
+		    #endif
+		    
+		    // pointer to the current data frame
+		    startPos    = (i)  * datapointerperFrame;
+		    endPos      = (i+1)* datapointerperFrame;
+
+		    // step1.2 transform
+		    helpers::Matrix<TDevice> weightsMatrix(this->m_weights,
+							   this->m_featureDim * this->m_numMixture,
+							   this->m_featureDim,
+							   this->m_weightStart);
+		    helpers::Matrix<TDevice> targetsMat(&this->m_dataBuff, this->m_featureDim,
+							this->m_paral,
+							this->m_maxTime * this->m_featureDim * 
+							this->m_numMixture + startPos
+							);
+		    helpers::Matrix<TDevice> transformed(&this->m_dataBuff,  
+							 this->m_featureDim * this->m_numMixture,
+							 this->m_paral,
+							 startPos *  this->m_numMixture
+							 );
+		    transformed.assignProduct(weightsMatrix, false, targetsMat, false);
+		    
+		    #ifdef DEBUG_LOCAL		    		    
+		    Cpu::real_vector mat1 = (*this->m_weights);
+		    Cpu::real_vector mat2 = this->m_dataBuff;
+		    Cpu::real_vector mat3 = this->m_paraVec;
+		    real_t sum3 = 0.0;
+		    real_t sum4 = 0.0;
+		    for (int j =0; j < (this->m_featureDim * this->m_numMixture); j++){
+			real_t tmp=0.0;
+			for (int k = 0; k< this->m_featureDim; k++){
+			    tmp += mat1[j + 
+					k * this->m_featureDim * this->m_numMixture + 
+					this->m_weightStart] * 
+				mat2[k+i*this->m_featureDim+this->m_maxTime * this->m_featureDim * 
+				     this->m_numMixture];
+			}
+			//printf("%f\t", tmp-mat2[i*this->m_featureDim * this->m_numMixture+j]);
+			sum3 += tmp;
+			sum4 += mat2[i*this->m_featureDim * this->m_numMixture+j];
+		    }
+		    printf("Transform %f %f\n", sum3, sum4);
+		    #endif
+
+		    // step1.3 shift by the bias and change the mean value
+		    // Update the mean value as mu+wx+b
+		    internal::ShiftBiasStep1 fn2;
+		    fn2.featureDim   = this->m_featureDim;
+		    fn2.mixNum       = this->m_numMixture;
+		    fn2.totalTime    = time * this->m_precedingLayer.parallelSequences();
+		    
+		    fn2.linearPart   = helpers::getRawPointer(this->m_dataBuff);
+		    fn2.biasPart     = this->m_weightsPtr  + 
+			this->m_featureDim * this->m_featureDim * this->m_numMixture;
+		
+		    fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		    
+		    // pointer tot the w^k O + b
+		    startPos  *=  this->m_numMixture;
+		    endPos    *=  this->m_numMixture;
+
+		    thrust::for_each(thrust::counting_iterator<int>(0)+startPos,
+				     thrust::counting_iterator<int>(0)+endPos,
+				     fn2);
+		    
+		    #ifdef DEBUG_LOCAL
+		    Cpu::real_vector mat4 = this->m_paraVec;
+		    real_t sum = 0.0;
+		    for (int idx = startPos; idx < endPos; idx++){
+			int temp = idx % (fn2.featureDim * fn2.mixNum);
+			int featIndex = temp % (fn2.featureDim);
+			int timeStep  = idx / (fn2.featureDim * fn2.mixNum);
+			int mixIndex  = temp/ fn2.featureDim;
+
+			int index = fn2.totalTime * fn2.mixNum + 
+			    timeStep * fn2.featureDim * fn2.mixNum + 
+			    mixIndex * fn2.featureDim + featIndex;
+			int index2 = mixIndex * fn2.featureDim + featIndex;
+			real_t mean1 = mat4[index];
+			real_t mean2 = mat3[index];
+			real_t tmp = (mat3[index] + mat2[idx] + 
+					      mat1[index2 + 
+						   this->m_featureDim * 
+						   this->m_featureDim * 
+						   this->m_numMixture]);
+			real_t tmp2 = mat4[index] - tmp;
+			printf("%f %f\t", tmp2, tmp);
+			sum += tmp2*tmp2;
+		    }
+		    printf("\n");
+		    #endif
+		    */
+
+--------------------
+Block 0824x04:

@@ -110,6 +110,7 @@ namespace layers {
                 throw std::runtime_error(std::string("Missing array 'config/") + 
 					 this->name() + "/config'");
 	    
+	    // read in the mdnConfig vector
             const rapidjson::Value &inputWeightsChild    = weightsChild["config"];
             m_mdnConfigVec.reserve(inputWeightsChild.Size());;
 	    for (rapidjson::Value::ConstValueIterator it = inputWeightsChild.Begin(); 
@@ -117,6 +118,7 @@ namespace layers {
                 m_mdnConfigVec.push_back(static_cast<real_t>(it->GetDouble()));
             numEle = m_mdnConfigVec[0];
 	    
+	    // read in the flagTieVariance vector
 	    if (weightsChild.HasMember("tieVarianceFlag") && 
 		weightsChild["tieVarianceFlag"].IsArray()){
 		const rapidjson::Value &BuftieVarianceFlag = weightsChild["tieVarianceFlag"];
@@ -124,6 +126,8 @@ namespace layers {
 		     it != BuftieVarianceFlag.End(); ++it)
 		    flagTieVariance.push_back(static_cast<int>(it->GetInt()));
 	    }
+
+	    // read in the trainable type vector
 	    if (weightsChild.HasMember("trainableFlag") && 
 		weightsChild["trainableFlag"].IsArray()){
 		const rapidjson::Value &BuftieVarianceFlag = weightsChild["trainableFlag"];
@@ -221,10 +225,13 @@ namespace layers {
 
 	    }else if(mdnType > 0){
 		// the MDNUnit mixture dynamic unit (either specified by --mdnDyn or model option)
+		// if the model (.autosave) has specified it, ignores the arguments
 		bool tmpTieVarianceFlag = ((flagTieVariance.size()>0) ?
 					   (flagTieVariance[i]>0)     :
 					   (m_tieVarMDNUnit));
+
 		// the Trainable flag, either by flagTrainable in model or arguments
+		// if the model (.autosave) has specified it, ignores the arguments
 		int  tmpTrainableFlag   = ((flagTrainable.size()>0)   ?
 					   (flagTrainable[i])       :
 					   (flagTrainable_arg[i]));
@@ -237,41 +244,59 @@ namespace layers {
 		switch (tmpTrainableFlag)
 		    {
 			
+		    // trainable unit with dynamic link (weight predicted by the network)
 		    case MDNUNIT_TYPE_2:
-			// trainable unit with dynamic link
 			mdnUnit = new MDNUnit_mixture_dynSqr<TDevice>(
 					unitS, unitE, unitSOut, unitEOut, mdnType, 
 					precedingLayer, this->size(), 
 					tmpTieVarianceFlag, 2);
 			printf("%d, with dynamic link\n", 0);
 			break;
-		    case MDNUNIT_TYPE_0:
+
+		    // conventional non-trainable unit
+		    case MDNUNIT_TYPE_0: 
 			featureDim    = unitEOut - unitSOut;
-			// conventional non-trainable unit
 			mdnUnit = new MDNUnit_mixture<TDevice>(
 					unitS, unitE, unitSOut, unitEOut, mdnType, 
 					featureDim, precedingLayer, this->size(), 
 					tmpTieVarianceFlag);
 			printf("%d\n", 0);
 			break;
+
+		    // MDN with time-invariant AR
 		    default:
+			int dynDirection;
+			int lookBackStep;
 			if (tmpTrainableFlag < 0){
 			    printf("The value in --mdnDyn can only be [0-9]");
 			    throw std::runtime_error("Error configuration --mdnDyn");
+			}else if (tmpTrainableFlag <= 3){
+			    // AR along the time axis
+			    dynDirection = MDNUNIT_TYPE_1_DIRECT;
+			    lookBackStep = (tmpTrainableFlag==1)?(1):(tmpTrainableFlag-1);
+			    
+			}else if (tmpTrainableFlag <= 5){
+			    // AR along the dimension axis
+			    dynDirection = MDNUNIT_TYPE_1_DIRECD;
+			    lookBackStep = tmpTrainableFlag - 3;
+			}else{
+			    // AR long both time and dimension axes
+			    dynDirection = MDNUNIT_TYPE_1_DIRECB;
+			    lookBackStep = tmpTrainableFlag - 5;
 			}
-			int lookBackStep = (tmpTrainableFlag==1)?(1):(tmpTrainableFlag-1);
 			
 			// create the trainable unit
 		        // case MDNUNIT_TYPE_1:	
 			featureDim    = unitEOut - unitSOut;
 			thisWeightNum = layers::MixtureDynWeightNum(featureDim, 
 								    mdnType, 
-								    lookBackStep);
+								    lookBackStep,
+								    dynDirection);
 			mdnUnit = new MDNUnit_mixture_dyn<TDevice>(
 					unitS, unitE, unitSOut, unitEOut, mdnType, 
 					precedingLayer, this->size(), 
 					tmpTieVarianceFlag, weightsNum, thisWeightNum,
-					lookBackStep, tmpTrainableFlag);
+					lookBackStep, tmpTrainableFlag, dynDirection);
 			weightsNum += thisWeightNum;
 			this->m_trainable = true;
 			printf("%d\n", thisWeightNum);
@@ -515,6 +540,7 @@ namespace layers {
     void MDNLayer<TDevice>::exportWeights(const helpers::JsonValue &weightsObject, 
 					  const helpers::JsonAllocator &allocator) const
     {
+	// we use exportConfig above instead of exportWeights to dump the weight
         if (!weightsObject->IsObject())
             throw std::runtime_error("The JSON value is not an object");
     }
@@ -571,7 +597,7 @@ namespace layers {
 	// Modify 05-24 Add support to EM-style generation
 	if (para < -3.0)
 	{
-	    throw std::runtime_error("Parameter to MDN->getOutput can't be less than -1.0");
+	    throw std::runtime_error("Parameter to MDN->getOutput can't be less than -2.0");
 	}
 	else if (para >= 0.0)
 	{

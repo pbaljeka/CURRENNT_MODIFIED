@@ -248,13 +248,16 @@ int trainerMain(const Configuration &config)
 	    neuralNetwork.initWeightMask(config.weightMaskPath());
 	}
 	
-	/* Add 0514 Wang: for reading the data mv and initialize for MDN */
+	/* Add 0514 Wang: read the data mean and variance (MV), and initialize MDN */
+	// step1: read MV if provided. MV maybe not necessary
 	boost::shared_ptr<data_sets::DataSetMV> dataMV=boost::make_shared<data_sets::DataSetMV>();
 	if (config.datamvPath().size()>0 && config.continueFile().empty())
 	    dataMV = boost::make_shared<data_sets::DataSetMV>(config.datamvPath());
-	// always check and initialize for MDN 
+	// step2: initialize for MDN 
 	if (config.trainingMode() && config.continueFile().empty())
 	    neuralNetwork.initOutputForMDN(*dataMV);
+	// Note: config.continueFile().empty() make sure it is the first epoch
+
 
         // check if this is a classification task
         bool classificationTask = false;
@@ -266,7 +269,7 @@ int trainerMain(const Configuration &config)
         }
         printf("\n");
 
-        // create the optimizer
+        // Training Mode: 
         if (config.trainingMode()) {
             printf("Creating the optimizer... ");
             fflush(stdout);
@@ -307,8 +310,7 @@ int trainerMain(const Configuration &config)
 	    // Note: this part is only utilized in the training stage
 	    if (config.continueFile().empty() && !config.trainedParameterPath().empty()){
 		// Modify 05-29
-		// Note: this can not be used if .autosave is utilized. Who wants to 
-		//       use .autosave instead of a simple network.jsn ?
+		// Note: no need to re-initialize a .autosave
 		//if (config.continueFile().empty()){
 		//    printf("WARNING: Network parameter will be over-written by %s\n", 
 		//	   config.trainedParameterPath().c_str());
@@ -316,6 +318,10 @@ int trainerMain(const Configuration &config)
 		printf("Read NN parameter from %s\n", config.trainedParameterPath().c_str());
 		readJsonFile(&netDocParameter, config.trainedParameterPath());
 		neuralNetwork.importWeights(netDocParameter, config.trainedParameterCtr());
+	    }else if (!config.continueFile().empty() && !config.trainedParameterPath().empty()){
+		printf("Re-initialize .autosave using another network is unnecessary\n");
+	    }else{
+		// nothing
 	    }
 
 
@@ -353,7 +359,7 @@ int trainerMain(const Configuration &config)
 		    neuralNetwork.reInitWeight();
 		    neuralNetwork.initOutputForMDN(*dataMV);
 		    if (++blowedTime > 10){
-			printf("Something wrong with the network\n");
+			printf("Learning rate tuning timeout. Please change the network structure\n");
 			finished = true;
 		    }
 		    continue;
@@ -464,11 +470,13 @@ int trainerMain(const Configuration &config)
                 boost::filesystem::remove(validationSet->cacheFileName());
             if (testSet != boost::shared_ptr<data_sets::DataSet>())
                 boost::filesystem::remove(testSet->cacheFileName());
+
+	// Printing the weight into binary data
         }else if(config.printWeightPath().size()>0){
 	    neuralNetwork.printWeightMatrix(config.printWeightPath());
 	    
+	 // Prediction mode
         }else {
-	    // evaluation mode
             Cpu::real_vector outputMeans  = feedForwardSet->outputMeans();
             Cpu::real_vector outputStdevs = feedForwardSet->outputStdevs();
             assert (outputMeans.size()  == feedForwardSet->outputPatternSize());
@@ -478,12 +486,19 @@ int trainerMain(const Configuration &config)
             bool unstandardize = config.revertStd(); 
 	    
 
-	    /* Modify 04-08, if output layer is not the last output, no standardize is required */
+	    /* Modify 04-08 */
 	    if (unstandardize && config.outputFromWhichLayer()<0 && 
 		(config.mdnPara() < -1.0 || config.mdnPara() > 0.0)){
-		
-                printf("Outputs will be scaled by mean and std  specified in NC file.\n");
-		/* Add 05-31, Need to read in MDN config */
+		printf("Outputs will be scaled by mean and std  specified in NC file.\n");
+
+		// when de-normalization is not used ?
+		// 1. unstandardize
+		// 2. output layer is not the last output
+		// 3. MDN, output the distribution parameter
+	       	// 4. MDN, output is from the sigmoid or softmax unit
+	
+		// escape the dimension corresponding to the sigmoid or softmax units
+		/* Add 05-31*/
 		Cpu::real_vector mdnConfigVec = neuralNetwork.getMdnConfigVec();
 		if (!mdnConfigVec.empty()){
 		    // if the unit is sigmoid or softmax, set the mean and std
@@ -497,13 +512,19 @@ int trainerMain(const Configuration &config)
 				outputStdevs[y] = 1.0;
 			    }
 			    printf("Output espace de-normalization from %d to %d\n", unitSOut+1, unitEOut);
+			}else{
+			    // nothing for GMM unit
 			}
 		    }
+		}else{
+		    // nothing for network without MDN
 		}
-            }
+            }else{
+		printf("Outputs will NOT be scaled by mean and std specified in NC file.\n");
+	    }
 
+	    
             int output_lag = config.outputTimeLag();
-
             if (config.feedForwardFormat() == Configuration::FORMAT_SINGLE_CSV) {
                 // open the output file
                 std::ofstream file(config.feedForwardOutputFile().c_str(), std::ofstream::out);
@@ -550,7 +571,6 @@ int trainerMain(const Configuration &config)
                 // close the file
                 file.close();
             } // format: FORMAT_SINGLE_CSV
-
             else if (config.feedForwardFormat() == Configuration::FORMAT_CSV) {
                 // process all data set fractions
                 int fracIdx = 0;
@@ -599,7 +619,6 @@ int trainerMain(const Configuration &config)
                     printf(" done.\n");
                 }
             } // format: FORMAT_CSV
-
             else if (config.feedForwardFormat() == Configuration::FORMAT_HTK) {
                 // process all data set fractions
                 int fracIdx = 0;
@@ -608,9 +627,9 @@ int trainerMain(const Configuration &config)
 		    printf("Outputs from layer %d gate output\n", config.outputFromWhichLayer());
 		}else if(config.mdnPara()>0){
 		    printf("Outputs from MDN with para=%f\n",config.mdnPara());
-		}else
+		}else{
 		    printf("Outputs from layer %d \n", config.outputFromWhichLayer());
-		
+		}
 		    
                 while (((frac = feedForwardSet->getNextFraction()))) {
                     printf("Computing outputs for data fraction %d...", ++fracIdx);
@@ -631,12 +650,12 @@ int trainerMain(const Configuration &config)
 		    // The third argument: 
 		    //      if mdnVarScale is specified 
 		    //          if config.mdnPara is -1, 
-		    //               this is mdnParameter generation with mdnVarScale specified
+		    //               this is MDN parameter generation with mdnVarScale specified
 		    //          else
-		    //               this is sampling
+		    //               this is sampling, scaled by mdnVarScake
 		    //      else
 		    //          directly use the mdnPara()
-		    
+
                     // write one output file per sequence
                     for (int psIdx = 0; psIdx < (int)outputs.size(); ++psIdx) {
                         if (outputs[psIdx].size() > 0) {

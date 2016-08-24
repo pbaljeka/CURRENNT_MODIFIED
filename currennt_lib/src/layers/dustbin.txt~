@@ -1,0 +1,107 @@
+Block 0824x01:
+// for full-matrix transformation (not used anymore)
+		// step1.1 get the data corresponding to this unit
+		internal::CopyTargetData fn;
+		fn.startDOut   = this->m_startDimOut;
+		fn.featureDim  = this->m_featureDim;
+		fn.layerSizeOut= this->m_layerSizeTar;
+		
+		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.output    = helpers::getRawPointer(targets);
+		fn.target    = helpers::getRawPointer(this->m_dataBuff) + 
+		    this->m_maxTime * this->m_featureDim * this->m_numMixture + 
+		    this->m_featureDim * this->m_paral;   // shift by 1 time
+		
+		int n  = (this->m_precedingLayer.curMaxSeqLength() - 1);
+		n =  n * this->m_precedingLayer.parallelSequences();
+		n =  n * this->m_featureDim;
+
+		thrust::for_each(thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0)+n,
+				 fn);		
+		/*
+		#ifdef DEBUG_LOCAL
+		Cpu::real_vector tmp1 = targets;
+		Cpu::real_vector tmp2 = this->m_dataBuff;
+		printf("\n"); real_t sum1 = 0.0; real_t sum2 = 0.0;
+		for (int i = 0; i < ( n / this->m_featureDim); i++){
+		    for (int j = 0; j < this->m_featureDim; j++){			
+			int pos_data1 = (fn.layerSizeOut * i)+fn.startDOut+j;
+			int pos_data2 = i*this->m_featureDim + j + 
+			    this->m_maxTime * this->m_featureDim * this->m_numMixture + 
+			    this->m_featureDim * this->m_paral;
+			sum1 += tmp1[pos_data1]; sum2 += tmp2[pos_data2];
+		    }
+		}
+		printf("\nCopyTarget %f %f\n", sum1, sum2);
+                #endif
+		*/
+
+		// step1.2 transform
+		helpers::Matrix<TDevice> weightsMatrix(this->m_weights,
+						       this->m_featureDim * this->m_numMixture,
+						       this->m_featureDim,
+						       this->m_weightStart);
+		helpers::Matrix<TDevice> targetsMat(&this->m_dataBuff, this->m_featureDim,
+						    this->m_totalTime,
+						    this->m_maxTime * this->m_featureDim * 
+						    this->m_numMixture
+						    );
+		helpers::Matrix<TDevice> transformed(&this->m_dataBuff,  
+						     this->m_featureDim * this->m_numMixture,
+						     this->m_totalTime);
+		transformed.assignProduct(weightsMatrix, false, targetsMat, false);
+		
+		/*
+		#ifdef DEBUG_LOCAL
+		Cpu::real_vector mat1 = (*this->m_weights);
+		Cpu::real_vector mat2 = this->m_dataBuff;
+		real_t sum3 = 0.0;
+		real_t sum4 = 0.0;
+		for (int i = 0; i < this->m_featureDim; i++){
+		    if (i % 10 == 0)
+			printf("\n");
+		    printf("%f\t", mat1[i]);
+		}
+		for (int i = 0; i < this->m_totalTime; i++){
+		    for (int j =0; j < (this->m_featureDim * this->m_numMixture); j++){
+			real_t tmp=0.0;
+			for (int k = 0; k< this->m_featureDim; k++){
+			    tmp += mat1[k+j*this->m_featureDim + this->m_weightStart] * 
+				mat2[k+i*this->m_featureDim+this->m_maxTime * this->m_featureDim * 
+				     this->m_numMixture];
+			    if (mat1[k+j*this->m_featureDim + this->m_weightStart] 
+				!= mat1[k+j*this->m_featureDim + this->m_weightStart]){
+				printf("Detect Nan");
+			    }
+			}
+			//printf("%f\t", tmp-mat2[i*this->m_featureDim * this->m_numMixture+j]);
+			sum3 += tmp;
+			if (sum3 != sum3){
+			    printf("Detect Nan ");
+			}
+			sum4 += mat2[i*this->m_featureDim * this->m_numMixture+j];
+		    }
+		}
+		printf("Transform %f %f\n", sum3, sum4);
+		#endif*/
+		
+		// step1.3 shift by the bias and change the mean value
+		// Update the mean value as mu+wx+b
+		internal::ShiftBiasStep1 fn2;
+		fn2.featureDim   = this->m_featureDim;
+		fn2.mixNum       = this->m_numMixture;
+		fn2.totalTime    = this->m_totalTime;
+		
+		fn2.linearPart   = helpers::getRawPointer(this->m_dataBuff);
+		fn2.biasPart     = this->m_weightsPtr  + 
+		                   this->m_featureDim * this->m_featureDim * this->m_numMixture;
+
+		fn2.trainableAPos= -1;   // this is not useful for mxiture_dynSqr
+		fn2.trainableBPos= -1;   // this is not useful for mxiture_dynSqr
+
+		fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
+		thrust::for_each(thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0)+n,
+				 fn2);
