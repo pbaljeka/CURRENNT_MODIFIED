@@ -144,6 +144,7 @@ Configuration::Configuration(int argc, const char *argv[])
     po::options_description trainingOptions("Training options");
     trainingOptions.add_options()
         ("train",               po::value(&m_trainingMode)     ->default_value(false),                 "enables the training mode")
+	("print_weight_to",        po::value(&m_printWeightPath)  ->default_value(""),                 "print the weight to binary file")
         ("stochastic", po::value(&m_hybridOnlineBatch)->default_value(false),                          "enables weight updates after every mini-batch of parallel calculated sequences")
         ("hybrid_online_batch", po::value(&m_hybridOnlineBatch)->default_value(false),                 "same as --stochastic (for compatibility)")
         ("shuffle_fractions",   po::value(&m_shuffleFractions) ->default_value(false),                 "shuffles mini-batches in stochastic gradient descent")
@@ -172,8 +173,11 @@ Configuration::Configuration(int argc, const char *argv[])
 	("varInitPara",         po::value(&m_varInitPara)    ->default_value(0.5, "0.5"), "Parameter to initialize the bias of MDN mixture unit (default 0.5)")
 	("vFloorPara",          po::value(&m_vFloorPara)     ->default_value(0.0001, "0.0001"), "Variance scale parameter for the variance floor (default 0.0001)")
 	("wInitPara",           po::value(&m_wInitPara)     ->default_value(1.0, "1.0"), "The weight of output layer before MDN will be initialized ~u(-para/layer*size, para/layer*size)")
-	("tieVariance",         po::value(&m_tiedVariance)  ->default_value(true,"true"), "Whether the variance should be tied across dimension for each mixture in MDN mixture unit? (default true)")
-	("mdn_sampleParaVec",   po::value(&m_mdnVarScaleGen)->default_value(""), "The vector of coefficients to scale the variance of the mixture model. The dimension should be the same as the MDN output (sum of all the MDN components)")
+	("tieVariance",         po::value(&m_tiedVariance)  ->default_value(true,"true"), "Whether the variance should be tied across dimension for all mixture in MDN mixture unit? (default true) Note, this argument will be ignored if tieVarianceFlag is specified in the model (.autosave)")
+	("mdn_sampleParaVec",   po::value(&m_mdnVarScaleGen)->default_value(""), "The binary vector of coefficients to scale each dimension of the variance of the mixture model. Dimension of the vector should be equal to the dimension of the target feature vector.")
+	("mdnDyn",            po::value(&m_mdnDyn) ->default_value(""), "Type of MDN dynamic model. Please specify a string of digitals, whose length is equal to the number of MDN units in the output MDN layer. \n\t0: normal MDN;\n\t1: 1-order AR;\n\t2: context-dependent AR;\n\t3: 2-order AR (default 0)\n Note, this argument will be ignored if trainableFlag is specified in the model (.autosave). Also note, due to historical reason, 2 is reserved for context-dependent AR")
+	("tanhAutoReg",       po::value(&m_tanhAutoregressive) ->default_value(0), "Whether utilizes the tanh to transform the weight for autogressive model (default not)")
+	("ReserverZeroFilter", po::value(&m_setDynFilterZero) ->default_value(0), "Reserved option for MDN Mixture Dyn units. Don't use it if you don't know it.")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -206,6 +210,8 @@ Configuration::Configuration(int argc, const char *argv[])
 	("trainedModel",      po::value(&m_trainedParameter)    ->default_value(""), "the path to the trained model paratemeter")
 	("trainedModelCtr",   po::value(&m_trainedParameterCtr) ->default_value(""), "the trainedModel controller. A string of 0/1 whose length is #layer of NN. (default: void, read in all parameters)")
 	("datamv",            po::value(&m_datamvPath)          ->default_value(""), "the path to the data mv file. This file can be read in and initialize MDN parameter (now not in use)")
+	("txtChaDim",         po::value(&m_chaDimLstmCharW)     ->default_value(0), "the dimension of the bag of character for LstmCharW")
+	("txtBank",           po::value(&m_chaBankPath)         ->default_value(""),       "the path to the character vectors for LstmCharW")
         ;
 
     po::options_description weightsInitializationOptions("Weight initialization options");
@@ -357,8 +363,10 @@ Configuration::Configuration(int argc, const char *argv[])
         std::cout << "The trained network will be written to '" << m_trainedNetwork << "'." << std::endl;
         if (boost::filesystem::exists(m_trainedNetwork))
             std::cout << "WARNING: The output file '" << m_trainedNetwork << "' already exists. It will be overwritten!" << std::endl;
-    }
-    else {
+    }else if(m_printWeightPath.size()>0){
+	std::cout << "Started in printing mode." << std::endl;
+	std::cout << "Weight will be print to " << m_printWeightPath << std::endl;
+    }else {
         std::cout << "Started in forward pass mode." << std::endl;
 
         std::cout << "The forward pass output will be written to '" << m_feedForwardOutputFile << "'." << std::endl;
@@ -662,6 +670,12 @@ const std::string& Configuration::weBankPath() const
     return m_weBank;
 }
 
+const std::string& Configuration::chaBankPath() const
+{
+    return m_chaBankPath;
+}
+
+
 const std::string& Configuration::mseWeightPath() const
 {
     return m_mseWeightPath;
@@ -690,6 +704,12 @@ const unsigned& Configuration::weDim() const
 {
     return m_weDim;
 }
+
+const unsigned& Configuration::txtChaDim() const
+{
+    return m_chaDimLstmCharW;
+}
+
 bool Configuration::weUpdate() const
 {
     return m_weUpdate;
@@ -741,6 +761,12 @@ bool Configuration::mdnFlag() const
     return m_mdnFlagPath.length()>0;
 }
 
+const std::string& Configuration::mdnDyn() const
+{
+    return m_mdnDyn;
+}
+
+
 const std::string& Configuration::datamvPath() const
 {
     return m_datamvPath;
@@ -776,7 +802,22 @@ const bool& Configuration::getTiedVariance() const
     return m_tiedVariance;
 }
 
+const std::string& Configuration::printWeightPath() const
+{
+    return m_printWeightPath;
+}
+
 const std::string& Configuration::mdnVarScaleGen() const
 {
     return m_mdnVarScaleGen;
+}
+
+const int& Configuration::tanhAutoregressive() const
+{
+    return m_tanhAutoregressive;
+}
+
+const int& Configuration::zeroFilter() const
+{
+    return m_setDynFilterZero;
 }

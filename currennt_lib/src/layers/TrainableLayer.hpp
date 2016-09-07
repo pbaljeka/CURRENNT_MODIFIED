@@ -177,7 +177,7 @@ namespace layers {
          * @param weightsObject The object containing the weights
          * @param allocator     The allocator to use
          */
-        void exportWeights(const helpers::JsonValue &weightsObject, const helpers::JsonAllocator &allocator) const;
+        virtual void exportWeights(const helpers::JsonValue &weightsObject, const helpers::JsonAllocator &allocator) const;
 
         /**
          * @see Layer::exportLayer()
@@ -190,7 +190,18 @@ namespace layers {
 	 */
 	virtual void reInitWeight();
 	
-	void reReadWeight(const helpers::JsonValue &weightsSection);
+	/**
+	 * Read the weight from a layer of a trained network
+	 */
+	virtual void reReadWeight(const helpers::JsonValue &weightsSection, const int layerSize);
+	
+
+	/**
+	 * return the weight configuration
+	 */
+	int inputWeightsPerBlock();
+        int internalWeightsPerBlock();
+
 	
     };
 

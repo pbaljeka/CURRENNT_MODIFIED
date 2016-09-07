@@ -83,4 +83,16 @@ namespace data_sets {
         return m_targetClasses;
     }
 
+
+    const Cpu::int_vector& DataSetFraction::txtData() const
+    {
+        return m_txtData;
+    }
+
+    int DataSetFraction::maxTxtLength() const
+    {
+        return m_maxTxtLength;
+    }
+  
+
 } // namespace data_sets

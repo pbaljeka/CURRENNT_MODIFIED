@@ -22,6 +22,7 @@
 
 #include "Optimizer.hpp"
 #include "../layers/TrainableLayer.hpp"
+#include "../layers/PostOutputLayer.hpp"
 #include "../layers/BinaryClassificationLayer.hpp"
 #include "../layers/MulticlassClassificationLayer.hpp"
 #include "../Configuration.hpp"
@@ -35,7 +36,9 @@
 namespace optimizers {
 
     template <typename TDevice>
-    real_t Optimizer<TDevice>::_processDataSet(data_sets::DataSet &ds, bool calcWeightUpdates, real_t *classError)
+    real_t Optimizer<TDevice>::_processDataSet(data_sets::DataSet &ds, 
+					       bool calcWeightUpdates, 
+					       real_t *classError)
     {
         // process all data set fractions
         real_t error = 0;
@@ -46,6 +49,8 @@ namespace optimizers {
 
         boost::shared_ptr<data_sets::DataSetFraction> frac;
         bool firstFraction = true;
+	int uttNum = ds.totalSequences();
+	int uttCnt = 0;
         while ((frac = ds.getNextFraction())) {
             // compute forward pass and calculate the error
             m_neuralNetwork.loadSequences(*frac);
@@ -81,34 +86,64 @@ namespace optimizers {
                             origWeights[i] = layer->weights();
                             layer->injectWeightNoise(Configuration::instance().weightNoiseSigma());
                         }
+			// ??? need weight noise for the PostTrainable Layer
                     }
                 }
                 // compute the backward pass and accumulate the weight updates
                 m_neuralNetwork.computeBackwardPass();
 
-                for (size_t i = 1; i < m_neuralNetwork.layers().size()-1; ++i) {
+                for (size_t i = 1; i < m_neuralNetwork.layers().size(); ++i) {
                     layers::TrainableLayer<TDevice> *layer = 
 			dynamic_cast<layers::TrainableLayer<TDevice>*>(
 				m_neuralNetwork.layers()[i].get());
-                    if (!layer)
-                        continue;
+		    layers::MDNLayer<TDevice> *mdnlayer = 
+			dynamic_cast<layers::MDNLayer<TDevice>*>(
+				m_neuralNetwork.layers()[i].get());
+		    
+		    // Modify 0703: PostLayer can be trainable too
+                    //if (!layer){
+		    if (!layer && !(mdnlayer && mdnlayer->flagTrainable())){
+			continue;
+		    }
+		    
+		    if (layer){
+			// if batch mode (not stochastic) and not the first fraction, 
+			// accumulating the updates
+			if (!firstFraction && !Configuration::instance().hybridOnlineBatch())
+			    thrust::transform(layer->weightUpdates().begin(), 
+					      layer->weightUpdates().end(), 
+					      m_curWeightUpdates[i].begin(), 
+					      m_curWeightUpdates[i].begin(), 
+					      thrust::plus<real_t>());
+			else
+			    thrust::copy(layer->weightUpdates().begin(), 
+					 layer->weightUpdates().end(), 
+					 m_curWeightUpdates[i].begin());
 
-		    // if batch mode (not stochastic) and not the first fraction, 
-		    // accumulating the updates
-                    if (!firstFraction && !Configuration::instance().hybridOnlineBatch())
-                        thrust::transform(layer->weightUpdates().begin(), 
-					  layer->weightUpdates().end(), 
-					  m_curWeightUpdates[i].begin(), 
-					  m_curWeightUpdates[i].begin(), thrust::plus<real_t>());
-                    else
-                    	thrust::copy(layer->weightUpdates().begin(), 
-				     layer->weightUpdates().end(), 
-				     m_curWeightUpdates[i].begin());
-
-                    // restore old weights before update in case of weight noise
-                    if (Configuration::instance().weightNoiseSigma() > 0.0)
-                        thrust::copy(origWeights[i].begin(), origWeights[i].end(), 
-				     layer->weights().begin());
+			// restore old weights before update in case of weight noise
+			if (Configuration::instance().weightNoiseSigma() > 0.0)
+			    thrust::copy(origWeights[i].begin(), origWeights[i].end(), 
+					 layer->weights().begin());
+		    }else if(mdnlayer && mdnlayer->flagTrainable()){
+			// if batch mode (not stochastic) and not the first fraction, 
+			// accumulating the updates
+			if (!firstFraction && !Configuration::instance().hybridOnlineBatch())
+			    thrust::transform(mdnlayer->weightUpdates().begin(), 
+					      mdnlayer->weightUpdates().end(), 
+					      m_curWeightUpdates[i].begin(), 
+					      m_curWeightUpdates[i].begin(), 
+					      thrust::plus<real_t>());
+			else
+			    thrust::copy(mdnlayer->weightUpdates().begin(), 
+					 mdnlayer->weightUpdates().end(), 
+					 m_curWeightUpdates[i].begin());
+			// ???
+			// restore old weights before update in case of weight noise
+			// if (Configuration::instance().weightNoiseSigma() > 0.0)
+			//    thrust::copy(origWeights[i].begin(), origWeights[i].end(), 
+			//		 mdnlayer->weights().begin());
+		    }
+		    
                 }
 
                 // update weights for hybrid online/batch learning
@@ -123,6 +158,8 @@ namespace optimizers {
             }
 
             firstFraction = false;
+	    //std::cerr << uttCnt << "/" << uttNum <<std::endl;
+	    uttCnt += frac->numSequences();
         }
 
         // update weights for batch learning
@@ -188,20 +225,42 @@ namespace optimizers {
     template <typename TDevice>
     void Optimizer<TDevice>::_storeWeights()
     {
-        for (size_t i = 1; i < m_neuralNetwork.layers().size() - 1; ++i) {
-            layers::TrainableLayer<TDevice> *layer = dynamic_cast<layers::TrainableLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
+        for (size_t i = 1; i < m_neuralNetwork.layers().size(); ++i) {
+            layers::TrainableLayer<TDevice> *layer = 
+		dynamic_cast<layers::TrainableLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
             if (layer) 
-            	thrust::copy(layer->weights().begin(), layer->weights().end(), m_bestWeights[i].begin());
+            	thrust::copy(layer->weights().begin(), 
+			     layer->weights().end(), 
+			     m_bestWeights[i].begin());
+	    else{
+		layers::MDNLayer<TDevice> *mdnlayer = 
+		    dynamic_cast<layers::MDNLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
+		if (mdnlayer && mdnlayer->flagTrainable())
+		    thrust::copy(mdnlayer->weights().begin(), 
+				 mdnlayer->weights().end(), 
+				 m_bestWeights[i].begin());
+	    }
         }
     }
 
     template <typename TDevice>
     void Optimizer<TDevice>::_restoreWeights()
     {
-        for (size_t i = 1; i < m_neuralNetwork.layers().size() - 1; ++i) {
-        	layers::TrainableLayer<TDevice> *layer = dynamic_cast<layers::TrainableLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
+        for (size_t i = 1; i < m_neuralNetwork.layers().size(); ++i) {
+	    layers::TrainableLayer<TDevice> *layer = 
+		dynamic_cast<layers::TrainableLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
             if (layer)
-            	thrust::copy(m_bestWeights[i].begin(), m_bestWeights[i].end(), layer->weights().begin());
+            	thrust::copy(m_bestWeights[i].begin(), 
+			     m_bestWeights[i].end(), 
+			     layer->weights().begin());
+	    else{
+		layers::MDNLayer<TDevice> *mdnlayer = 
+		    dynamic_cast<layers::MDNLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
+		if (mdnlayer && mdnlayer->flagTrainable())
+		    thrust::copy(m_bestWeights[i].begin(), 
+				 m_bestWeights[i].end(), 
+				 mdnlayer->weights().begin());
+	    }
         }
     }
 
@@ -246,10 +305,15 @@ namespace optimizers {
     {
         // initialize the best weights vectors
         m_bestWeights.resize(m_neuralNetwork.layers().size());
-        for (size_t i = 1; i < m_neuralNetwork.layers().size()-1; ++i) {
-        	layers::TrainableLayer<TDevice> *layer = dynamic_cast<layers::TrainableLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
+        for (size_t i = 1; i < m_neuralNetwork.layers().size(); ++i) {
+            layers::TrainableLayer<TDevice> *layer = 
+		dynamic_cast<layers::TrainableLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
+	    layers::MDNLayer<TDevice> *mdnlayer = 
+		dynamic_cast<layers::MDNLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
             if (layer)
                 m_bestWeights[i] = layer->weights();
+	    else if (mdnlayer && mdnlayer->flagTrainable())
+		m_bestWeights[i] = mdnlayer->weights();
         }
 
         // initialize the current weight updates vectors
@@ -257,7 +321,8 @@ namespace optimizers {
 	
 	// Add 0409 to check the decayEpochNM
 	if (m_decayEpochNM >= m_maxEpochsNoBest){
-	    printf("WARNING: decayEpochNM should be less than m_maxEpochsNoBest. Now learning_rate will be prohibited\n");
+	    printf("WARNING: decayEpochNM should be less than m_maxEpochsNoBest.");
+	    printf("Now learning_rate will be prohibited\n");
 	}
     }
 
@@ -500,6 +565,7 @@ namespace optimizers {
 		dynamic_cast<layers::TrainableLayer<TDevice>*>(m_neuralNetwork.layers()[i].get());
             if (layer)
                 m_bestWeights[i] = layer->weights();
+	    // ??? for MDNLayer
         }
         // initialize the current weight updates vectors
         m_curWeightUpdates = m_bestWeights;

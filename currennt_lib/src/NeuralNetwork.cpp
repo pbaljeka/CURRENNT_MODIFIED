@@ -36,7 +36,8 @@
 
 template <typename TDevice>
 NeuralNetwork<TDevice>::NeuralNetwork(
-	const helpers::JsonDocument &jsonDoc, int parallelSequences, int maxSeqLength, 
+	const helpers::JsonDocument &jsonDoc, int parallelSequences, 
+	int maxSeqLength, int chaDim, int maxTxtLength,
 	int inputSizeOverride = -1, int outputSizeOverride = -1)
 {
     try {
@@ -107,7 +108,7 @@ NeuralNetwork<TDevice>::NeuralNetwork(
 			throw std::runtime_error("SkipAdd, SkipPara can not be the first layer");
 		    layer = LayerFactory<TDevice>::createLayer(layerType, &*layerChild, 
 							       weightsSection, parallelSequences, 
-							       maxSeqLength);
+							       maxSeqLength, chaDim, maxTxtLength);
 
 		}else if(layerType == "skipadd" || layerType == "skipini" ||
 			 layerType == "skippara_logistic" || layerType == "skippara_relu" || 
@@ -148,7 +149,8 @@ NeuralNetwork<TDevice>::NeuralNetwork(
                     layer = LayerFactory<TDevice>::createLayer(
 							layerType, &*layerChild, weightsSection, 
 							parallelSequences, 
-							maxSeqLength, m_layers.back().get());
+							maxSeqLength, chaDim, maxTxtLength, 
+							m_layers.back().get());
 		}
                 m_layers.push_back(boost::shared_ptr<layers::Layer<TDevice> >(layer));
 		
@@ -213,10 +215,11 @@ layers::InputLayer<TDevice>& NeuralNetwork<TDevice>::inputLayer()
 
 /* Modify 04-08 to tap in the output of arbitary layer */
 /*template <typename TDevice>
-layers::TrainableLayer<TDevice>& NeuralNetwork<TDevice>::outputLayer()
-{
+  layers::TrainableLayer<TDevice>& NeuralNetwork<TDevice>::outputLayer()
+  {
     return static_cast<layers::TrainableLayer<TDevice>&>(*m_layers[m_layers.size()-2]);
-    }*/
+  }
+*/
 template <typename TDevice>
 layers::Layer<TDevice>& NeuralNetwork<TDevice>::outputLayer(const int layerID)
 {
@@ -275,7 +278,8 @@ void NeuralNetwork<TDevice>::computeBackwardPass()
     BOOST_REVERSE_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers) {
         layer->computeBackwardPass();
     //std::cout << "output errors " << layer->name() << std::endl;
-    //thrust::copy(layer->outputErrors().begin(), layer->outputErrors().end(), std::ostream_iterator<real_t>(std::cout, ";"));
+    //thrust::copy(layer->outputErrors().begin(), layer->outputErrors().end(), 
+    // std::ostream_iterator<real_t>(std::cout, ";"));
     //std::cout << std::endl;
     }
 }
@@ -318,12 +322,14 @@ void NeuralNetwork<TDevice>::exportWeights(const helpers::JsonDocument& jsonDoc)
 
     // create the weight objects
     BOOST_FOREACH (const boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers) {
-    	layers::TrainableLayer<TDevice> *trainableLayer = dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
-        if (trainableLayer)
+    	layers::TrainableLayer<TDevice> *trainableLayer = 
+	    dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+        if (trainableLayer){
             trainableLayer->exportWeights(&weightsObject, &jsonDoc->GetAllocator());
-	// Modify 0507 Wang: for mdn PostProcess Layer
-	else{
-	    layers::MDNLayer<TDevice> *mdnlayer = dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
+	}else{
+	    // Modify 0507 Wang: for mdn PostProcess Layer
+	    layers::MDNLayer<TDevice> *mdnlayer = 
+		dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
 	    if (mdnlayer)
 		mdnlayer->exportConfig(&weightsObject, &jsonDoc->GetAllocator());
 	}
@@ -353,13 +359,14 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
        -3.0 is chosen for convience.
        
        < -3.0: no MDN generation
-       > -3.0 && < -2.0: generating EM-style
-       > -2.0 && < 0: generate MDN parameters (mdnoutput = -1.0)
-       >0 : generate samples from MDN with the variance = variance * mdnoutput */
+       > -3.0 && < -1.5: generating EM-style
+       > -1.5 && < 0.0: generate MDN parameters (mdnoutput = -1.0)
+       > 0.0 : generate samples from MDN with the variance = variance * mdnoutput */
 
     if (mdnoutput >= -3.0 && getGateOutput){
 	genMethod = ERROR;
 	throw std::runtime_error("MDN output and gate output can not be generated together");
+
     }else if (mdnoutput < -3.0 && getGateOutput){
 	olg = outGateLayer(layerID);
 	olm = NULL;
@@ -367,6 +374,7 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
 	if (olg == NULL)
 	    throw std::runtime_error("Gate output tap ID invalid\n");
 	genMethod = GATEOUTPUT;
+
     }else if (mdnoutput >= -3.0 && !getGateOutput){
 	olg = NULL;
 	olm = outMDNLayer();
@@ -435,13 +443,15 @@ std::vector<std::vector<std::vector<real_t> > > NeuralNetwork<TDevice>::getOutpu
 
 
 /* Add 16-02-22 Wang: for WE updating */
-// Initialization for using external we bank
+// Initialization for using external WE bank
+// (read in the word embeddings and save them in a matrix)
 template <typename TDevice>
 bool NeuralNetwork<TDevice>::initWeUpdate(const std::string weBankPath, const unsigned weDim, 
 					  const unsigned weIDDim, const unsigned maxLength)
 {
     // check if only the first layer is an input layer
-    layers::InputLayer<TDevice>* inputLayer = dynamic_cast<layers::InputLayer<TDevice>*>(m_layers.front().get());
+    layers::InputLayer<TDevice>* inputLayer = 
+	dynamic_cast<layers::InputLayer<TDevice>*>(m_layers.front().get());
     if (!inputLayer)
 	throw std::runtime_error("The first layer is not an input layer");
     else if (!inputLayer->readWeBank(weBankPath, weDim, weIDDim, maxLength)){
@@ -453,7 +463,8 @@ bool NeuralNetwork<TDevice>::initWeUpdate(const std::string weBankPath, const un
 template <typename TDevice>
 bool NeuralNetwork<TDevice>::flagInputWeUpdate() const
 {
-    layers::InputLayer<TDevice>* inputLayer = dynamic_cast<layers::InputLayer<TDevice>*>(m_layers.front().get());
+    layers::InputLayer<TDevice>* inputLayer = 
+	dynamic_cast<layers::InputLayer<TDevice>*>(m_layers.front().get());
     if (!inputLayer){
 	throw std::runtime_error("The first layer is not an input layer");
 	return false;
@@ -466,7 +477,8 @@ bool NeuralNetwork<TDevice>::flagInputWeUpdate() const
 template <typename TDevice>
 bool NeuralNetwork<TDevice>::saveWe(const std::string weFile) const
 {
-    layers::InputLayer<TDevice>* inputLayer = dynamic_cast<layers::InputLayer<TDevice>*>(m_layers.front().get());
+    layers::InputLayer<TDevice>* inputLayer = 
+	dynamic_cast<layers::InputLayer<TDevice>*>(m_layers.front().get());
     if (!inputLayer){
 	throw std::runtime_error("The first layer is not an input layer");
 	return false;
@@ -480,7 +492,8 @@ template <typename TDevice>
 bool NeuralNetwork<TDevice>::initMseWeight(const std::string mseWeightPath)
 {
     
-    layers::PostOutputLayer<TDevice>* outputLayer = dynamic_cast<layers::PostOutputLayer<TDevice>*>(m_layers.back().get());
+    layers::PostOutputLayer<TDevice>* outputLayer = 
+	dynamic_cast<layers::PostOutputLayer<TDevice>*>(m_layers.back().get());
     if (!outputLayer){
 	throw std::runtime_error("The output layer is not a postoutput layer");
 	return false;
@@ -514,18 +527,22 @@ bool NeuralNetwork<TDevice>::initWeightMask(const std::string weightMaskPath)
 	tempVec.push_back(tempVal);
     }
     std::cout << "Read " << numEle << " weight mask elements" << std::endl;
-	
+    std::cout << "Note:" << "No mask is not used for the trainable MDN output Layer" << std::endl;
     int pos = 0;
     BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
-	layers::TrainableLayer<TDevice>* weightLayer = dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	layers::TrainableLayer<TDevice>* weightLayer = 
+	    dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
 	if (weightLayer){
 	    if (weightLayer->weightNum()+pos > numEle){
 		throw std::runtime_error(std::string("Weight mask input is not long enough"));
 	    }else{
-		weightLayer->readWeightMask(tempVec.begin()+pos, tempVec.begin()+pos+weightLayer->weightNum());
+		weightLayer->readWeightMask(tempVec.begin()+pos, 
+					    tempVec.begin()+pos+weightLayer->weightNum());
 		pos = pos+weightLayer->weightNum();
 	    }
 	}
+	// for MDN trainable, multiple MDNUnits can be used, instead of using mask to separate
+	// streams
     }
     
 }
@@ -534,7 +551,8 @@ template <typename TDevice>
 void NeuralNetwork<TDevice>::maskWeight()
 {
     BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
-	layers::TrainableLayer<TDevice>* weightLayer = dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	layers::TrainableLayer<TDevice>* weightLayer = 
+	    dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
 	if (weightLayer){
 	    weightLayer->maskWeight();
 	}
@@ -565,12 +583,16 @@ void NeuralNetwork<TDevice>::initOutputForMDN(const data_sets::DataSetMV &datamv
 	}
     }
 }
+
+/* importWeights from pre-trained model
+   initialization for each layer is controled by ctrStr
+*/
 template <typename TDevice>
 void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc, 
 					   const std::string &ctrStr)
 {
     try{
-	// Read in the control vector
+	// Read in the control vector, a sequence of 1 0
 	Cpu::int_vector tempctrStr;
 	tempctrStr.resize(m_layers.size(), 1);
 	if (ctrStr.size() > 0 && ctrStr.size()!=m_layers.size()){
@@ -598,10 +620,29 @@ void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc,
 	// Read in the parameter
 	int cnt=0;
 	BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
-	    layers::TrainableLayer<TDevice>* Layer = dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	    layers::TrainableLayer<TDevice>* Layer = 
+		dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	    // Read in the parameter for a hidden layer
 	    if (Layer && tempctrStr[cnt] > 0){
 		printf("%d ", cnt);
-		Layer->reReadWeight(weightsSection);
+		layers::LstmLayerCharW<TDevice>* LstmCharWLayer = 
+		    dynamic_cast<layers::LstmLayerCharW<TDevice>*>(layer.get());
+		if (LstmCharWLayer){
+		    // Because LstmCharWLayer is special
+		    Layer->reReadWeight(weightsSection, LstmCharWLayer->lstmSize());
+		}else{
+		    Layer->reReadWeight(weightsSection, Layer->size());
+		}
+	    // Read in the parameter for MDN layer with trainable link
+	    }else if(tempctrStr[cnt] > 0){
+		layers::MDNLayer<TDevice>* mdnlayer = 
+		    dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
+		if (mdnlayer && mdnlayer->flagTrainable()){
+		    printf("%d ", cnt);
+		    mdnlayer->reReadWeight(weightsSection);
+		}
+	    }else{
+		// skip
 	    }
 	    cnt++;
 	}
@@ -610,6 +651,7 @@ void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc,
 	throw std::runtime_error(std::string("Fail to read network weight")+e.what());
     }
 }
+
 
 template <typename TDevice>
 Cpu::real_vector NeuralNetwork<TDevice>::getMdnConfigVec()
@@ -622,6 +664,88 @@ Cpu::real_vector NeuralNetwork<TDevice>::getMdnConfigVec()
     }    
     return temp;
 }
+
+// PrintWeightMatrix
+// print the weight of a network to a binary data
+// use ReadCURRENNTWeight(filename,format,swap) matlab function to read the data
+template <typename TDevice>
+void NeuralNetwork<TDevice>::printWeightMatrix(const std::string weightPath)
+{
+    std::fstream ifs(weightPath.c_str(),
+		      std::ifstream::binary | std::ifstream::out);
+    if (!ifs.good()){
+	throw std::runtime_error(std::string("Fail to open output weight path: "+weightPath));
+    }
+
+    // format of the output binary weight
+    std::vector<int> weightSize;
+    weightSize.clear();
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layers::TrainableLayer<TDevice>* Layer = 
+	    dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	
+	if (Layer){
+	    weightSize.push_back(Layer->weights().size());
+	    weightSize.push_back(Layer->size());
+	    weightSize.push_back(Layer->precedingLayer().size());
+	    weightSize.push_back(Layer->inputWeightsPerBlock());
+	    weightSize.push_back(Layer->internalWeightsPerBlock());
+	}else{
+	    layers::MDNLayer<TDevice>* mdnlayer = 
+		dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
+	    if (mdnlayer && mdnlayer -> flagTrainable()){
+		weightSize.push_back(mdnlayer->weights().size());
+		weightSize.push_back(mdnlayer->weights().size());
+		weightSize.push_back(0);  // previous size = 0
+		weightSize.push_back(1);  // internal block = 1
+		weightSize.push_back(0);  // internal weight = 0
+	    }
+	}
+    }
+    
+    // macro information
+    // Number of layers
+    // weight size, layer size, preceding layer size, inputWeightsPerBlock, internalWeightsPerBlock
+    real_t tmpPtr;
+    tmpPtr = (real_t)weightSize.size()/5;
+    ifs.write((char *)&tmpPtr, sizeof(real_t));
+    for (int i = 0 ; i<weightSize.size(); i++){
+	tmpPtr = (real_t)weightSize[i];
+	ifs.write((char *)&tmpPtr, sizeof(real_t));
+    }
+
+    // weights
+    real_t *tmpPtr2;
+    Cpu::real_vector weightVec;
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layers::TrainableLayer<TDevice>* Layer = 
+	    dynamic_cast<layers::TrainableLayer<TDevice>*>(layer.get());
+	if (Layer){
+	    weightVec = Layer->weights();
+	    tmpPtr2 = weightVec.data();
+	    if (tmpPtr2){
+		ifs.write((char *)tmpPtr2, sizeof(real_t)*Layer->weights().size());
+	    }else{
+		throw std::runtime_error("Fail to output weight. Void pointer");
+	    }
+	}else{
+	    layers::MDNLayer<TDevice>* mdnlayer = 
+		dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
+	    if (mdnlayer && mdnlayer -> flagTrainable()){
+		weightVec = mdnlayer->weights();
+		tmpPtr2 = weightVec.data();
+		if (tmpPtr2){
+		    ifs.write((char *)tmpPtr2, sizeof(real_t)*mdnlayer->weights().size());
+		}else{
+		    throw std::runtime_error("Fail to output weight. Void pointer");
+		}
+	    }
+	}
+    }
+    ifs.close();
+    
+}
+
 
 // explicit template instantiations
 template class NeuralNetwork<Cpu>;

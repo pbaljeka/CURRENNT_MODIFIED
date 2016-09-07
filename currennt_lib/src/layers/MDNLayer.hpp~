@@ -1,0 +1,17 @@
+
+#ifndef LAYERS_MDNOUTPUTLAYER_HPP
+#define LAYERS_MDNOUTPUTLAYER_HPP
+
+
+#include "PostOutputLayer.hpp"
+
+
+namespace layers {
+    
+    template <typename TDevice>
+    class MDNLayer : public PostOutputLayer<TDevice>
+    {
+    public:
+	
+    }
+}

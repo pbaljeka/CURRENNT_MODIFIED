@@ -26,6 +26,7 @@
 
 #include "SteepestDescentOptimizer.hpp"
 #include "../layers/TrainableLayer.hpp"
+#include "../layers/MDNLayer.hpp"
 #include "../layers/InputLayer.hpp"
 #include "../layers/Layer.hpp"
 #include "../helpers/getRawPointer.cuh"
@@ -185,20 +186,27 @@ namespace optimizers {
 	    
 	    internal::UpdateWeightFn_withMask updateWeightFn;
 	    internal::UpdateWeightFn updateWeightFn2;
-	    for (size_t i = 1; i < this->_neuralNetwork().layers().size()-1; ++i) {
-        	layers::TrainableLayer<TDevice> *layer = dynamic_cast<layers::TrainableLayer<TDevice>*>(this->_neuralNetwork().layers()[i].get());
-		if (!layer)
+	    for (size_t i = 1; i < this->_neuralNetwork().layers().size(); ++i) {
+        	layers::TrainableLayer<TDevice> *layer = 
+		    dynamic_cast<layers::TrainableLayer<TDevice>*>(
+					this->_neuralNetwork().layers()[i].get());
+		layers::MDNLayer<TDevice> *mdnlayer = 
+			dynamic_cast<layers::MDNLayer<TDevice>*>(
+					this->_neuralNetwork().layers()[i].get());
+		    
+		if (!layer && !(mdnlayer && mdnlayer->flagTrainable()))
 		    continue;
 		
 		// if mask is utilized
-		if (layer->flagUseWeightMask()){
+		if (layer && layer->flagUseWeightMask()){
 		    updateWeightFn.momentum     = m_momentum;
 		    updateWeightFn.learningRate = m_learningRate*m_learningRateDecay;
 		    if (layer->learningRate() >= 0.0)
 			updateWeightFn.learningRate = layer->learningRate();
 
 		    updateWeightFn.weights       = helpers::getRawPointer(layer->weights());
-		    updateWeightFn.weightUpdates = helpers::getRawPointer(this->_curWeightUpdates()[i]);
+		    updateWeightFn.weightUpdates = helpers::getRawPointer(
+							this->_curWeightUpdates()[i]);
 		    updateWeightFn.weightDeltas  = helpers::getRawPointer(m_weightDeltas[i]);
 		
 		    // Add 0413 for Weight mask
@@ -211,7 +219,7 @@ namespace optimizers {
 				      updateWeightFn
 				      );
 		// if mask is not used
-		}else{
+		}else if(layer){
 		    updateWeightFn2.momentum     = m_momentum;
 		    updateWeightFn2.learningRate = m_learningRate*m_learningRateDecay;
 		    if (layer->learningRate() >= 0.0)
@@ -219,15 +227,35 @@ namespace optimizers {
 		    
 
 		    updateWeightFn2.weights       = helpers::getRawPointer(layer->weights());
-		    updateWeightFn2.weightUpdates = helpers::getRawPointer(this->_curWeightUpdates()[i]);
+		    updateWeightFn2.weightUpdates = helpers::getRawPointer(
+							this->_curWeightUpdates()[i]);
 		    updateWeightFn2.weightDeltas  = helpers::getRawPointer(m_weightDeltas[i]);
 				
 		    thrust::transform(
-				      thrust::counting_iterator<int>(0),
-				      thrust::counting_iterator<int>((int)layer->weights().size()),
-				      layer->weights().begin(),
-				      updateWeightFn2
-				      );
+				    thrust::counting_iterator<int>(0),
+				    thrust::counting_iterator<int>((int)layer->weights().size()),
+				    layer->weights().begin(),
+				    updateWeightFn2);
+		    
+		}else if(mdnlayer && mdnlayer->flagTrainable()){
+		    updateWeightFn2.momentum     = m_momentum;
+		    updateWeightFn2.learningRate = m_learningRate*m_learningRateDecay;
+		    //if (layer->learningRate() >= 0.0)
+		    //     updateWeightFn2.learningRate = layer->learningRate();
+		    
+
+		    updateWeightFn2.weights       = helpers::getRawPointer(mdnlayer->weights());
+		    updateWeightFn2.weightUpdates = helpers::getRawPointer(
+							this->_curWeightUpdates()[i]);
+		    updateWeightFn2.weightDeltas  = helpers::getRawPointer(m_weightDeltas[i]);
+				
+		    thrust::transform(
+				    thrust::counting_iterator<int>(0),
+				    thrust::counting_iterator<int>((int)mdnlayer->weights().size()),
+				    mdnlayer->weights().begin(),
+				    updateWeightFn2);
+		}else{
+		    throw std::runtime_error("Impossible Error");
 		}
 	    }
 	}
@@ -235,10 +263,14 @@ namespace optimizers {
 
     template <typename TDevice>
     SteepestDescentOptimizer<TDevice>::SteepestDescentOptimizer(
-        NeuralNetwork<TDevice> &neuralNetwork, data_sets::DataSet &trainingSet, data_sets::DataSet &validationSet,
-        data_sets::DataSet &testSet, int maxEpochs, int maxEpochsNoBest, int validateEvery, int testEvery, 
-        real_t learningRate, real_t momentum, real_t weLearningRate, real_t learningRateDecayRate, int decayEpochNM)
-        : Optimizer<TDevice>(neuralNetwork, trainingSet, validationSet, testSet, maxEpochs, maxEpochsNoBest, validateEvery, testEvery, decayEpochNM)
+        NeuralNetwork<TDevice> &neuralNetwork, data_sets::DataSet &trainingSet, 
+	data_sets::DataSet &validationSet,
+        data_sets::DataSet &testSet, int maxEpochs, int maxEpochsNoBest, 
+	int validateEvery, int testEvery, 
+        real_t learningRate, real_t momentum, real_t weLearningRate, 
+	real_t learningRateDecayRate, int decayEpochNM)
+        : Optimizer<TDevice>(neuralNetwork, trainingSet, validationSet, testSet, 
+			     maxEpochs, maxEpochsNoBest, validateEvery, testEvery, decayEpochNM)
         , m_learningRate    (learningRate)
         , m_learningRateFirst(learningRate)
 	, m_weLearningRate(weLearningRate)
@@ -264,7 +296,8 @@ namespace optimizers {
     {
         Optimizer<TDevice>::exportState(jsonDoc);
 
-        Optimizer<TDevice>::_exportWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", m_weightDeltas);
+        Optimizer<TDevice>::_exportWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", 
+					   m_weightDeltas);
     }
 
     template <typename TDevice>
@@ -272,7 +305,8 @@ namespace optimizers {
     {
         Optimizer<TDevice>::importState(jsonDoc);
 
-        Optimizer<TDevice>::_importWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", &m_weightDeltas);
+        Optimizer<TDevice>::_importWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", 
+					   &m_weightDeltas);
     }
 
     template <typename TDevice>
@@ -280,7 +314,8 @@ namespace optimizers {
     {
         Optimizer<TDevice>::importParameter(jsonDoc);
 	// currently no need for momentum
-        // Optimizer<TDevice>::_importWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", &m_weightDeltas);
+        // Optimizer<TDevice>::_importWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", 
+	// &m_weightDeltas);
     }
 
     template <typename TDevice>

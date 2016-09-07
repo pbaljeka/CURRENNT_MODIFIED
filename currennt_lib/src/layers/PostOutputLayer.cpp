@@ -59,13 +59,16 @@ namespace layers {
         Layer<TDevice> &precedingLayer,
         int requiredSize,
         bool createOutputs)
-        : Layer<TDevice>  (layerChild, precedingLayer.parallelSequences(), precedingLayer.maxSeqLength(), createOutputs)
+        : Layer<TDevice>  (layerChild, precedingLayer.parallelSequences(), 
+			   precedingLayer.maxSeqLength(), createOutputs)
         , m_precedingLayer(precedingLayer)
     {
 	// Modify 0506. For MDN, requireSize = -1, no need to check here
 	// if (this->size() != requiredSize)
         if (requiredSize > 0 && this->size() != requiredSize)
-            throw std::runtime_error("Size mismatch: " + boost::lexical_cast<std::string>(this->size()) + " vs. " + boost::lexical_cast<std::string>(requiredSize));
+            throw std::runtime_error("Size mismatch: " + 
+				     boost::lexical_cast<std::string>(this->size()) + " vs. " + 
+				     boost::lexical_cast<std::string>(requiredSize));
 	
 	/* Add 0401 wang */
 	// assign the vector to output weights for RMSE
@@ -82,14 +85,17 @@ namespace layers {
     void PostOutputLayer<TDevice>::loadSequences(const data_sets::DataSetFraction &fraction)
     {
         if (fraction.outputPatternSize() != this->size()) {
-            throw std::runtime_error(std::string("Output layer size of ") + boost::lexical_cast<std::string>(this->size())
-            + " != data target pattern size of " + boost::lexical_cast<std::string>(fraction.outputPatternSize()));
+            throw std::runtime_error(std::string("Output layer size of ") + 
+				     boost::lexical_cast<std::string>(this->size()) +
+				     " != data target pattern size of " + 
+				     boost::lexical_cast<std::string>(fraction.outputPatternSize()));
         }
 
         Layer<TDevice>::loadSequences(fraction);
 
         if (!this->_outputs().empty())
-        	thrust::copy(fraction.outputs().begin(), fraction.outputs().end(), this->_outputs().begin());
+        	thrust::copy(fraction.outputs().begin(), fraction.outputs().end(), 
+			     this->_outputs().begin());
     }
 
     /* Add 0401 wang for weighted MSE*/
@@ -119,8 +125,9 @@ namespace layers {
 	numEle  = (numEleE-numEleS)/sizeof(real_t);
 	ifs.seekg(0, std::ios::beg);
 	
-	if (numEle != this->size() ){
-	    throw std::runtime_error(std::string("MSE weight vector is not identical to output size"));
+	if (numEle != this->size()){
+	    printf("MSE weight vector length incompatible: %d %d", numEle, this->size());
+	    throw std::runtime_error("Error in MSE weight configuration");
 	}
 	
 	// read in the data
@@ -151,6 +158,12 @@ namespace layers {
     {
         return m_precedingLayer;
     }    
+
+    template <typename TDevice>
+    bool PostOutputLayer<TDevice>::flagTrainable() const
+    {
+	return false;
+    }
 
     // explicit template instantiations
     template class PostOutputLayer<Cpu>;

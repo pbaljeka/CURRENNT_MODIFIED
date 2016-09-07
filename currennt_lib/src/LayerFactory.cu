@@ -42,15 +42,20 @@
 #include "layers/SkipParaLayer.hpp"
 #include "layers/MDNLayer.hpp"
 #include "layers/CNNLayer.hpp"
+#include "layers/LstmLayerCharW.hpp"
 
 #include <stdexcept>
 
 
 template <typename TDevice>
 layers::Layer<TDevice>* LayerFactory<TDevice>::createLayer(
-		const std::string &layerType, const helpers::JsonValue &layerChild,
-        const helpers::JsonValue &weightsSection, int parallelSequences, 
-        int maxSeqLength, layers::Layer<TDevice> *precedingLayer)
+		const std::string &layerType,        
+		const helpers::JsonValue &layerChild,
+		const helpers::JsonValue &weightsSection, 
+		int parallelSequences, int maxSeqLength, 
+		int chaDim, int maxTxtLength,
+		layers::Layer<TDevice> *precedingLayer
+		)
 {
     using namespace layers;
     using namespace activation_functions;
@@ -71,10 +76,20 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createLayer(
     	return new LstmLayer<TDevice>(layerChild, weightsSection, *precedingLayer, false);
     else if (layerType == "blstm")
     	return new LstmLayer<TDevice>(layerChild, weightsSection, *precedingLayer, true);
+    else if (layerType == "lstmw")
+    	return new LstmLayerCharW<TDevice>(layerChild, weightsSection, *precedingLayer, 
+					   chaDim, maxTxtLength, false);
+    else if (layerType == "blstmw")
+    	return new LstmLayerCharW<TDevice>(layerChild, weightsSection, *precedingLayer, 
+					   chaDim, maxTxtLength, true);
     else if (layerType == "cnn")
 	return new CNNLayer<TDevice>(layerChild, weightsSection, *precedingLayer);
-    else if (layerType == "sse" || layerType == "weightedsse" || layerType == "rmse" || layerType == "ce" || layerType == "wf" || layerType == "binary_classification" || layerType == "multiclass_classification" || layerType == "mdn" ) {
-        //layers::TrainableLayer<TDevice>* precedingTrainableLayer = dynamic_cast<layers::TrainableLayer<TDevice>*>(precedingLayer);
+    else if (layerType == "sse"                       || layerType == "weightedsse"  || 
+	     layerType == "rmse"                      || layerType == "ce"  || 
+	     layerType == "wf"                        || layerType == "binary_classification" ||
+	     layerType == "multiclass_classification" || layerType == "mdn" ) {
+        //layers::TrainableLayer<TDevice>* precedingTrainableLayer = 
+	// dynamic_cast<layers::TrainableLayer<TDevice>*>(precedingLayer);
         //if (!precedingTrainableLayer)
     	//    throw std::runtime_error("Cannot add post output layer after a non trainable layer");
 
@@ -86,7 +101,8 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createLayer(
             return new RmsePostOutputLayer<TDevice>(layerChild, *precedingLayer);
         else if (layerType == "ce")
             return new CePostOutputLayer<TDevice>(layerChild, *precedingLayer);
-        if (layerType == "sse_mask" || layerType == "wf") // wf provided for compat. with dev. version
+        if (layerType == "sse_mask" || layerType == "wf") 
+	    // wf provided for compat. with dev. version
     	    return new SseMaskPostOutputLayer<TDevice>(layerChild, *precedingLayer);
         else if (layerType == "binary_classification")
     	    return new BinaryClassificationLayer<TDevice>(layerChild, *precedingLayer);

@@ -28,6 +28,7 @@
 #include "layers/PostOutputLayer.hpp"
 #include "layers/MDNLayer.hpp"
 #include "layers/SkipParaLayer.hpp"
+#include "layers/LstmLayerCharW.hpp"
 #include "data_sets/DataSet.hpp"
 #include "helpers/JsonClassesForward.hpp"
 
@@ -62,7 +63,8 @@ public:
      * @param parallelSequences The maximum number of sequences that shall be computed in parallel
      * @param maxSeqLength      The maximum length of a sequence
      */
-    NeuralNetwork(const helpers::JsonDocument &jsonDoc, int parallelSequences, int maxSeqLength,
+    NeuralNetwork(const helpers::JsonDocument &jsonDoc, int parallelSequences, 
+		  int maxSeqLength, int chaDim, int maxTxtLength,
                   int inputSizeOverride, int outputSizeOverride);
 
     /**
@@ -154,9 +156,9 @@ public:
      *
      * @return Outputs of the processed fraction
      */
-    std::vector<std::vector<std::vector<real_t> > > getOutputs(const int  layerID =-1, 
-							       const bool gateFromOutput=false,
-							       const real_t  mdnoutput=-4.0);
+    std::vector<std::vector<std::vector<real_t> > > getOutputs(const int  layerID        = -1, 
+							       const bool gateFromOutput = false,
+							       const real_t  mdnoutput   = -4.0);
     
     /**
      * Read in the weight from trained_network.jsn or .autosave
@@ -191,6 +193,10 @@ public:
     
     /* Add 0531 Wang: get the mdn config*/
     Cpu::real_vector getMdnConfigVec();
+
+    /* Add 0630 Wang: print the binary weight matrix */
+    void printWeightMatrix(const std::string weightPath);
+    
 };
 
 

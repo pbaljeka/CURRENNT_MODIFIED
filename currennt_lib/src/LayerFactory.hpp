@@ -53,6 +53,8 @@ public:
         const helpers::JsonValue &weightsSection,
         int                       parallelSequences, 
         int                       maxSeqLength,
+	int                       chaDim,          // Add 0620, for txt data LstmCharW
+	int                       maxTxtLength,    // Add 0620, for txt data LstmCharW
         layers::Layer<TDevice>   *precedingLayer = NULL
         );
 

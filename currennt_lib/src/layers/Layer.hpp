@@ -104,7 +104,8 @@ namespace layers {
          * 
          * @return The number of blocks in the layer
          */
-        int size() const;
+	// modify 0612: to virtual size so that LstmLayerChaW can be supported
+        virtual int size() const;
 
         /**
          * Returns the maximum number of sequences that can be computed in parallel
@@ -146,7 +147,7 @@ namespace layers {
          *
          * @return The output error
          */
-        real_vector& outputErrors();
+        virtual real_vector& outputErrors();
 
 	
 	cpu_real_vector& outputErrorsCpu();   

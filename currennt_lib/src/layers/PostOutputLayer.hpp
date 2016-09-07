@@ -44,7 +44,7 @@ namespace layers {
 	
 	/* Add 0401 for weighted MSE */
 	real_vector m_outputMseWeights;  // vector for MSE output weights
-	bool m_flagMseWeight;            // whether to use m_flagMseWeight
+	bool        m_flagMseWeight;     // whether to use m_flagMseWeight
 	
     protected:
         real_vector& _targets();
@@ -97,6 +97,12 @@ namespace layers {
 	   only defines for Trainable Layers, here do nothing
 	 */
 	virtual void reInitWeight();
+
+	/* *
+	 * Functions to enable the trainable features of PostOutput Layer
+	 */
+	// Whether this layer is trainable (default false)
+	virtual bool flagTrainable() const;
 	
     };
 

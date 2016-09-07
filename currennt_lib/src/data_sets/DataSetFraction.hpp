@@ -44,6 +44,7 @@ namespace data_sets {
             int         originalSeqIdx;
             int         length;
             std::string seqTag;
+	    int         txtLength;
         };
 
     private:
@@ -58,6 +59,11 @@ namespace data_sets {
         Cpu::real_vector    m_outputs;
         Cpu::pattype_vector m_patTypes;
         Cpu::int_vector     m_targetClasses;
+	
+	// Add 0620 Wang: 
+	int m_txtPatternSize;
+	int m_maxTxtLength;                 // the maximum length of txt of this faction
+	Cpu::int_vector   m_txtData;       // the txt input data of this fraction
 
     private:
         /**
@@ -140,6 +146,19 @@ namespace data_sets {
          * @return The target classes vector
          */
         const Cpu::int_vector& targetClasses() const;
+
+	// Add 0620 Wang: methods related to the txt data
+	/**
+         * Returns the txt data
+         *
+         * @return the txt data
+         */
+	const Cpu::int_vector& txtData() const;
+
+	int maxTxtLength() const;
+
+        
+	
     };
 
 } // namespace data_sets
