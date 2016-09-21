@@ -212,6 +212,9 @@ Configuration::Configuration(int argc, const char *argv[])
 	("datamv",            po::value(&m_datamvPath)          ->default_value(""), "the path to the data mv file. This file can be read in and initialize MDN parameter (now not in use)")
 	("txtChaDim",         po::value(&m_chaDimLstmCharW)     ->default_value(0), "the dimension of the bag of character for LstmCharW")
 	("txtBank",           po::value(&m_chaBankPath)         ->default_value(""),       "the path to the character vectors for LstmCharW")
+	("weNoiseStartDim",   po::value(&m_weNoiseStartDim)     ->default_value(-2), "the first dimension that will be added with noise in the input layer (for Word embedding). Python-style index")
+	("weNoiseEndDim", po::value(&m_weNoiseEndDim)           ->default_value(-1), "the next of the last dimension that will be addded with noise in the input layer (for Word embedding). Python-style index")
+	("weNoiseDev",    po::value(&m_weNoiseDev)              ->default_value(0.1), "the standard deviation of the noise that will be added to the word vectors (default 0.1)")
         ;
 
     po::options_description weightsInitializationOptions("Weight initialization options");
@@ -821,3 +824,20 @@ const int& Configuration::zeroFilter() const
 {
     return m_setDynFilterZero;
 }
+
+
+const int& Configuration::weNoiseStartDim() const
+{
+    return m_weNoiseStartDim;
+}
+
+const int& Configuration::weNoiseEndDim() const
+{
+    return m_weNoiseEndDim;
+}
+
+const real_t&       Configuration::weNoiseDev() const
+{
+    return m_weNoiseDev;
+}
+

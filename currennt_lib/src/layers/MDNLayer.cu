@@ -152,7 +152,7 @@ namespace layers {
 	
 	    real_t tempVal;
 	    ifs.read((char *)&tempVal, sizeof(real_t)); //
-	    numEle = (long int)tempVal;                 // get the total number of parameter
+	    numEle = (int)tempVal;                      // get the total number of parameter
 	    
 	    if (tmpnumEle != (numEle*5+1)){
 		throw std::runtime_error("Invalid MDN config file.");
@@ -187,7 +187,7 @@ namespace layers {
 	// read Trainable from input argument
 	if (config.mdnDyn().size() > 0){
 	    if (config.mdnDyn().size() != numEle){
-		printf("mdnDyn length: %d, MDNUnits %d\n", config.mdnDyn().size(), numEle);
+		printf("mdnDyn length: %d, MDNUnits %d\n", (int)config.mdnDyn().size(), (int)numEle);
 		throw std::runtime_error("Error in mdnDyn");
 	    }
 	    flagTrainable_arg.resize(config.mdnDyn().size(), 0);

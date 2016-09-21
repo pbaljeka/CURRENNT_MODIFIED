@@ -36,7 +36,8 @@ namespace layers {
     template <typename TDevice>
     class InputLayer : public Layer<TDevice>
     {
-    
+	typedef typename TDevice::real_vector    real_vector;
+
     private:
 	/* Add 16-02-22 Wang: for WE updating */
 	/* The vector to store the readWeBank */
@@ -45,26 +46,44 @@ namespace layers {
 	unsigned int      m_weDim;
 	unsigned int      m_weIDDim;
 	bool              m_flagWeUpdate;
+	
+	/* Add 20160902 Wang: add noise to the WE */
+	// Because input_noise_sigma must be turned off when reading the WE index,
+	// noise can only be added in the input layer when WE is used
+	int               m_weNoiseStartDim;
+	int               m_weNoiseEndDim;
+	real_t            m_weNoiseDev;
 
     public:
         /**
          * Constructs the Layer
          *
          * @param layerChild        The layer section of the JSON configuration
-         * @param parallelSequences The maximum number of sequences that shall be computed in parallel
+         * @param parallelSequences The maximum number of sequences that shall be computed 
+	 *                          in parallel
          * @param maxSeqLength      The maximum length of a sequence
          */
         InputLayer(const helpers::JsonValue &layerChild, int parallelSequences, int maxSeqLength);
 
 	/* Add 16-02-22 Wang: for WE updating */
-	bool readWeBank(const std::string weBankPath, const unsigned dim, const unsigned dimidx, const unsigned maxLength);
+	bool readWeBank(const std::string weBankPath, const unsigned dim, 
+			const unsigned dimidx, const unsigned maxLength);
+	
 	Cpu::real_vector& _weBank();
+	
 	Cpu::real_vector& _weIdx();
+	
 	unsigned int&     _weDim();
+	
 	unsigned int&     _weIDDim();
+	
 	bool              flagInputWeUpdate();
+	
 	bool              saveWe(const std::string weFile);
 
+	bool initWeNoiseOpt(const int weNoiseStartDim, const int weNoiseEndDim,
+			    const real_t weNoiseDev);
+	
         /**
          * Destructs the Layer
          */

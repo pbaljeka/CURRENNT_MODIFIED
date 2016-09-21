@@ -236,6 +236,10 @@ int trainerMain(const Configuration &config)
 	    // Call the method and ask neuralNetwork to load the input
 	    neuralNetwork.initWeUpdate(config.weBankPath(), config.weDim(), 
 				       config.weIDDim(), maxSeqLength*parallelSequences);
+	    if (!neuralNetwork.initWeNoiseOpt(config.weNoiseStartDim(), config.weNoiseEndDim(),
+					      config.weNoiseDev())){
+		throw std::runtime_error("Error in configuration of weNoise");
+	    }
 	}
 	
 	/* Add 16-04-01 Wang: for MSE weight */

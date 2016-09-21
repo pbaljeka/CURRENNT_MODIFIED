@@ -261,8 +261,11 @@ layers::PostOutputLayer<TDevice>& NeuralNetwork<TDevice>::postOutputLayer()
 template <typename TDevice>
 void NeuralNetwork<TDevice>::loadSequences(const data_sets::DataSetFraction &fraction)
 {
-    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers)
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
         layer->loadSequences(fraction);
+	// Add 20160902, add noise for each input vector
+    }
+    
 }
 
 template <typename TDevice>
@@ -458,6 +461,22 @@ bool NeuralNetwork<TDevice>::initWeUpdate(const std::string weBankPath, const un
 	throw std::runtime_error("Fail to initialize for we updating");
     }
 }
+
+template <typename TDevice>
+bool NeuralNetwork<TDevice>::initWeNoiseOpt(const int weNoiseStartDim, const int weNoiseEndDim,
+					    const real_t weNoiseDev)
+{
+    // check if only the first layer is an input layer
+    layers::InputLayer<TDevice>* inputLayer = 
+	dynamic_cast<layers::InputLayer<TDevice>*>(m_layers.front().get());
+    if (!inputLayer)
+	throw std::runtime_error("The first layer is not an input layer");
+    else if (!inputLayer->initWeNoiseOpt(weNoiseStartDim, weNoiseEndDim, weNoiseDev)){
+	throw std::runtime_error("Fail to initialize for we updating");
+    }
+}
+
+
 
 // check whether the input layer uses external we bank
 template <typename TDevice>

@@ -204,6 +204,7 @@ namespace layers {
 	 */
 	virtual void reInitWeight() = 0;
 	
+	
     };
 
 } // namespace layers

@@ -213,7 +213,6 @@ namespace layers {
         layersArray->PushBack(layerObject, allocator);
     }
 
-
     // explicit template instantiations
     template class Layer<Cpu>;
     template class Layer<Gpu>;

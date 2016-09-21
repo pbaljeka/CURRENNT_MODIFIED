@@ -699,7 +699,7 @@ namespace data_sets {
 			m_cacheFile.write((const char *)txtData.data(),
 					  sizeof(int) * txtData.size());
 			
-			assert (m_cacheFile.tellp() - seq->txtDataBegom == 
+			assert (m_cacheFile.tellp() - seq->txtDataBegin == 
 				seq->txtLength * m_txtDataPatternSize * sizeof(int));
 		    }else{
 			seq->txtDataBegin = 0;

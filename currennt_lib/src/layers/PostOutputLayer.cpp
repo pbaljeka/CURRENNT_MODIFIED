@@ -126,7 +126,7 @@ namespace layers {
 	ifs.seekg(0, std::ios::beg);
 	
 	if (numEle != this->size()){
-	    printf("MSE weight vector length incompatible: %d %d", numEle, this->size());
+	    printf("MSE weight vector length incompatible: %d %d", (int)numEle, (int)this->size());
 	    throw std::runtime_error("Error in MSE weight configuration");
 	}
 	

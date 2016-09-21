@@ -438,17 +438,60 @@ namespace {
         {
 
 	    real_t *targetClass = (output + (outputIdx*layerSizeOut+startDOut));
-            // calculate the CEE
+	    // calculate the CEE
             if (targetClass < 0)
                 return 0;
             else {
-                long int Idx    = outputIdx * layerSize + (long int)targetClass;
+                int Idx    = outputIdx * layerSize + (int)(*targetClass);
                 real_t targetProb = helpers::max(helpers::NumericLimits<real_t>::min(), 
 						 prob[Idx]);
                 return -1*log(targetProb);
             }
         }
     };
+    
+    // Definition for the back-propagation of softmax
+    struct ComputeSoftMaxBP
+    {
+	int layerSizeIn;        //
+	int layerSizeOut;     // 
+	int startD;
+	int startDOut;
+	int paraDim;
+	
+	real_t *errors;       // the error buffer of the previous layer
+	real_t *targetData;   // the ground truth value of target
+	real_t *prob;         // the output probablity computed by this softmax unit
+	const char *patTypes; 
+
+	// from 1 to timesteps * softmax class number
+	__host__ __device__ void operator() (const int outputIdx) const
+	{
+
+	    // timeStep: which frame is it?
+	    // dimStep:  which dimension in the NN output side this frame ?
+	    const int timeStep = outputIdx / paraDim;
+	    const int dimStep  = outputIdx % paraDim;
+	    
+	    if (patTypes[timeStep] == PATTYPE_NONE)
+		return;
+
+	    // target data (1-dimensional data)
+	    const real_t *data = targetData + (layerSizeOut * timeStep) + startDOut;
+	    bool hitflag = ((((*data) - dimStep)*((*data) - dimStep)) < 0.0001);
+
+	    // position of the gradient data in the NN output layer side
+	    const int pos_error= layerSizeIn * timeStep + dimStep + startD;
+	    
+	    real_t *probptr    = prob + outputIdx;
+	    
+	    // calculate the gradient
+	    // note: we assume the target data is a real number that has not been normalized
+	    *(errors+pos_error) = (hitflag)?(-1+(*probptr)):((*probptr));
+
+	}
+    };
+    
 
     struct ComputeMixtureDistance
     {
@@ -2073,7 +2116,7 @@ namespace layers {
 	    }else{
 		ifs.close();
 		printf("Dimension mismatch: %d (vector) VS %d (tartget feature)", 
-		       tmpnumEle, this->m_layerSizeTar);
+		       (int)tmpnumEle, (int)this->m_layerSizeTar);
 		throw std::runtime_error("Dimension unmatch");
 	    }
             
@@ -2430,11 +2473,12 @@ namespace layers {
 	m_offset.resize(this->m_precedingLayer.patTypes().size(), 0.0);
 	
 	// assume ont softmax unit only corresponds to one dimension of the output
+	
 	if ((endDimOut - startDimOut) != 1){
 	    throw std::runtime_error("Check MDN configure. SoftMax => one dimensional target");
 	}
 	
-	throw std::runtime_error("WARNING: code on softmax is incomplete\n");
+	//throw std::runtime_error("WARNING: code on softmax is incomplete\n");
 	
     }
 
@@ -2656,14 +2700,22 @@ namespace layers {
 	    
 	    int n = this->m_precedingLayer.curMaxSeqLength();
 	    n = n*this->m_precedingLayer.parallelSequences();
-		
+	    
+	    /*Cpu::real_vector temp1 = targets;
+	    Cpu::real_vector temp2 = this->m_paraVec;
+	    for (int i = 0; i<n; i++){
+		int tarclass = temp1[i * fn.layerSizeOut + fn.startDOut];
+		int idx = i * fn.layerSize + tarclass;
+		tmp += -1*internal::safeLog(temp2[idx]);
+		}*/
+
 	    tmp = thrust::transform_reduce(
 		  thrust::counting_iterator<int>(0),
 		  thrust::counting_iterator<int>(0)+n,
 		  fn,
-		  (real_t)0,
+		  (real_t)0.0,
 		  thrust::plus<real_t>()
-	  );
+		  );
 
 	}}
 	return tmp;
@@ -2671,6 +2723,31 @@ namespace layers {
     template <typename TDevice>
     void MDNUnit_softmax<TDevice>::computeBackward(real_vector &targets)
     {
+	// BP for softmax unit, it is similar to the sigmoid function
+	// however, the output is a number that has not been normalized (start from 0)
+	{{
+		internal::ComputeSoftMaxBP fn;
+		fn.startD       = this->m_startDim;
+		fn.startDOut    = this->m_startDimOut;
+		fn.paraDim      = this->m_endDim - this->m_startDim;
+		fn.layerSizeOut = this->m_layerSizeTar;
+		fn.layerSizeIn  = this->m_precedingLayer.size();
+
+		fn.errors      = helpers::getRawPointer(this->m_precedingLayer.outputErrors());
+		fn.patTypes    = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.targetData  = helpers::getRawPointer(targets);
+		fn.prob        = helpers::getRawPointer(this->m_paraVec);
+
+		int n =this->m_precedingLayer.curMaxSeqLength();
+		n = n*this->m_precedingLayer.parallelSequences();
+		n = n*this->m_paraDim;
+		
+		thrust::for_each(
+				 thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0)+n,
+				 fn);
+	    
+	}}
     }
 
 
@@ -3831,7 +3908,8 @@ namespace layers {
 	}
 	
 	if (weights.size() < m_weightStart + m_weightNum){
-	    printf("Unmatched weight pos: %d %d %d\n", weights.size(), m_weightStart, m_weightNum);
+	    printf("Unmatched weight pos: %d %d %d\n", (int)weights.size(), 
+		   m_weightStart, m_weightNum);
 	    throw std::runtime_error("Error in weight configuration of MDN unit");
 	}
 	m_weightsPtr       = helpers::getRawPointer(weights) + m_weightStart;
@@ -4808,7 +4886,7 @@ namespace layers {
 			 fn);
 		
 		Cpu::real_vector tempVec2 = this->m_paraVec;
-		printf("");
+		//printf("");
 	}}
 
     }

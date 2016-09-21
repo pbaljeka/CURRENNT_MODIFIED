@@ -21,10 +21,15 @@
  *****************************************************************************/
 
 #include "InputLayer.hpp"
+#include "../Configuration.hpp"
+
+#include <boost/random/normal_distribution.hpp>
+#include <boost/random/uniform_real_distribution.hpp>
+#include <boost/random/mersenne_twister.hpp>
 
 #include <boost/lexical_cast.hpp>
+#include <thrust/transform.h>
 #include <stdexcept>
-
 #include <fstream>
 
 namespace layers {
@@ -82,13 +87,18 @@ namespace layers {
 		throw std::runtime_error("m_weIdx size is smaller than fracTime\n");
 	    }
 	    thrust::fill(m_weIdx.begin(), m_weIdx.end(), -1);
+
+	    
+	    Cpu::real_vector tempInput;
+	    tempInput.resize(this->size(), 0.0);
+
 	    for (int i=0; i<fracTime; i++){
 		bias = i*fraction.inputPatternSize();
 		
 		// copy the original input data
 		thrust::copy(fraction.inputs().begin()+bias, 
 			     fraction.inputs().begin()+bias+fraction.inputPatternSize(), 
-			     this->_outputs().begin()+i*this->size());
+			     tempInput.begin());
 		
 		// retrieve the embedded vector idx and save m_weIdx
 		weidx = (long unsigned int)(fraction.inputs()[i * fraction.inputPatternSize() + 
@@ -101,10 +111,34 @@ namespace layers {
 		m_weIdx[i]=weidx;
 		
 		// copy the we data into the input data (output of the InputLayer)
-		thrust::copy(m_weBank.begin() + weidx     * m_weDim, 
-			     m_weBank.begin() + (weidx+1) * m_weDim, 
-			     this->_outputs().begin() + i * this->size() + 
+		thrust::copy(m_weBank.begin()  + weidx     * m_weDim, 
+			     m_weBank.begin()  + (weidx+1) * m_weDim, 
+			     tempInput.begin() +  
 			     fraction.inputPatternSize()  - 1);
+		
+		// Add 0902: add noise to the input
+		// Note: this is different from the input_noise_sigma
+		//       here, the noise will be added every epoch
+		if (this->m_weNoiseStartDim > 0){		    
+		    if (this->m_weNoiseStartDim >= this->size() ||
+			this->m_weNoiseEndDim   >  this->size()){
+			throw std::runtime_error("weNoiseDimenion error");
+		    }
+		    const Configuration &config = Configuration::instance();	    
+		    static boost::mt19937 *gen = NULL;
+		    if (!gen) {
+			gen = new boost::mt19937;
+			gen->seed(config.randomSeed()+100);
+		    }
+		    boost::random::normal_distribution<real_t> dist(0.0, this->m_weNoiseDev);
+		    for (size_t j = this->m_weNoiseStartDim; j < this->m_weNoiseEndDim; ++j)
+			tempInput[j] += dist(*gen);;
+		}
+
+		// copy the we data into the input data (output of the InputLayer)
+		thrust::copy(tempInput.begin(), tempInput.end(),
+			     this->_outputs().begin()+i*this->size());
+		
 	    }
 	    // for debugging
 	    if (0){
@@ -113,7 +147,9 @@ namespace layers {
 	    }
 	}else
 	    // if no we is utilized, just copy the input
-	    thrust::copy(fraction.inputs().begin(),fraction.inputs().end(),this->_outputs().begin());
+	    thrust::copy(fraction.inputs().begin(),
+			 fraction.inputs().end(),
+			 this->_outputs().begin());
     }
 
     template <typename TDevice>
@@ -230,7 +266,28 @@ namespace layers {
     {
 	// nothing to be done here
     }
-
+    
+    template <typename TDevice>
+    bool InputLayer<TDevice>::initWeNoiseOpt(const int weNoiseStartDim, const int weNoiseEndDim,
+					     const real_t weNoiseDev)
+    {
+	this->m_weNoiseStartDim = weNoiseStartDim;
+	this->m_weNoiseEndDim   = weNoiseEndDim;
+	this->m_weNoiseDev      = weNoiseDev;
+	if (this->m_weNoiseStartDim > this->m_weNoiseEndDim){
+	    printf("Error: this->m_weNoiseStartDim > this->m_weNoiseEndDim\n");
+	    return false;
+	}
+	if (this->m_weNoiseDev < 0.0){
+	    printf("Error: this->m_weNoiseDev < 0.0 \n");
+	    return false;
+	}
+	if (this->m_weNoiseStartDim > 0){
+	    printf("WE noise: from %d to %d, %f\n", weNoiseStartDim, weNoiseEndDim, weNoiseDev);
+	}
+	return true;
+    }
+    
     // explicit template instantiations
     template class InputLayer<Cpu>;
     template class InputLayer<Gpu>;

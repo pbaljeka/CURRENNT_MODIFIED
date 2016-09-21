@@ -79,6 +79,12 @@ private:
     std::string m_weBank;         // path to the we data
     std::string m_trainedParameter;    // path of the trained model, only model weights  will be read
     std::string m_trainedParameterCtr; // a control string to decide which layer should be read in
+    /* Add 20160902 WE noise options*/
+    int         m_weNoiseStartDim;    // noise adding, from which dimension?
+    int         m_weNoiseEndDim;      // noise adding, end at which dimension
+    real_t      m_weNoiseDev;         // noise std.
+
+
 
     /* Add 0401 Wang: for mse weight */
     std::string m_mseWeightPath;  // path to the mse weight file
@@ -518,6 +524,12 @@ public:
 
     const std::string& weBankPath() const;
     
+    const int&          weNoiseStartDim() const;
+
+    const int&          weNoiseEndDim() const;      // noise adding, end at which dimension
+
+    const real_t&       weNoiseDev() const;         // noise std.
+
     const std::string& mseWeightPath() const;
 
     const std::string& weightMaskPath() const;

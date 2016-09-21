@@ -171,6 +171,9 @@ public:
     bool initWeUpdate(const std::string weBankPath, const unsigned weDim, 
 		      const unsigned weIDDim, const unsigned maxLength);
     
+    bool initWeNoiseOpt(const int weNoiseStartDim, const int weNoiseEndDim,
+			const real_t weNoiseDev);
+    
     bool flagInputWeUpdate() const;
 
 
