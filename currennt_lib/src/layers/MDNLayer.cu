@@ -53,6 +53,8 @@
 #include <boost/random/normal_distribution.hpp>
 #include <boost/random/uniform_real_distribution.hpp>
 #include <boost/random/mersenne_twister.hpp>
+#include <boost/algorithm/string.hpp>
+#include <boost/lexical_cast.hpp>
 
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
@@ -100,7 +102,7 @@ namespace layers {
 	flagTrainable.clear();
 	
 	/******************* Read config ********************/
-	// read in the configuration
+	// read in the configuration from .autosave 
 	if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())) {
 	    const rapidjson::Value &weightsChild = (*weightsSection)[this->name().c_str()];
             if (!weightsChild.IsObject())
@@ -135,28 +137,30 @@ namespace layers {
 		     it != BuftieVarianceFlag.End(); ++it)
 		    flagTrainable.push_back(static_cast<int>(it->GetInt()));
 	    }
-
+	// read in the configuration from mdn_config (binary file)
         }else{
 	    std::ifstream ifs(config.mdnFlagPath().c_str(), 
 			      std::ifstream::binary | std::ifstream::in);
-	    if (!ifs.good()){
-		throw std::runtime_error(std::string("Fail to open MDNConfig: " + 
-						     config.mdnFlagPath()));
-	    }
+	    if (!ifs.good())
+		throw std::runtime_error(std::string("Can't open MDNConfig:"+config.mdnFlagPath()));
+	    
 	    std::streampos numEleS, numEleE;
 	    numEleS = ifs.tellg();
 	    ifs.seekg(0, std::ios::end);
 	    numEleE = ifs.tellg();
+	    // get the total number of parameter
 	    long int tmpnumEle  = (numEleE-numEleS)/sizeof(real_t);
 	    ifs.seekg(0, std::ios::beg);
 	
+	    // get the total number of MDNUnit
 	    real_t tempVal;
-	    ifs.read((char *)&tempVal, sizeof(real_t)); //
-	    numEle = (int)tempVal;                      // get the total number of parameter
-	    
+	    ifs.read((char *)&tempVal, sizeof(real_t));
+	    numEle = (int)tempVal;                      
 	    if (tmpnumEle != (numEle*5+1)){
-		throw std::runtime_error("Invalid MDN config file.");
+		throw std::runtime_error("Number of parameter != 1st parameter * 5 + 1");
 	    }	    
+
+	    // get the configuration for each MDNUnit
 	    m_mdnConfigVec.resize(1+numEle*5, 0.0);
 	    m_mdnConfigVec[0] = (real_t)numEle;
 	    for (int i=0; i<numEle; i++){
@@ -187,35 +191,49 @@ namespace layers {
 	// read Trainable from input argument
 	if (config.mdnDyn().size() > 0){
 	    if (config.mdnDyn().size() != numEle){
-		printf("mdnDyn length: %d, MDNUnits %d\n", (int)config.mdnDyn().size(), (int)numEle);
-		throw std::runtime_error("Error in mdnDyn");
+		// num1_num2_num3 format
+		std::vector<std::string> tempArgs;
+		boost::split(tempArgs, config.mdnDyn(), boost::is_any_of("_"));
+		if (tempArgs.size() != numEle){
+		    printf("mdnDyn length: %d, MDNUnits %d\n", 
+			   (int)tempArgs.size(), (int)numEle);
+		    throw std::runtime_error("Error in mdnDyn");
+		}
+		flagTrainable_arg.resize(config.mdnDyn().size(), 0);
+		for (int i=0; i < tempArgs.size(); i++)
+		    flagTrainable_arg[i] = boost::lexical_cast<int>(tempArgs[i]);
+		
+	    }else{
+		flagTrainable_arg.resize(config.mdnDyn().size(), 0);
+		for (int i=0; i < config.mdnDyn().size(); i++)
+		    flagTrainable_arg[i] = config.mdnDyn()[i] - '0';
 	    }
-	    flagTrainable_arg.resize(config.mdnDyn().size(), 0);
-	    for (int i=0; i < config.mdnDyn().size(); i++)
-		flagTrainable_arg[i] = config.mdnDyn()[i] - '0';
 	}else{
-	    // default, make it all false
+	    // default, make it all nontrainable unit
 	    flagTrainable_arg.resize(numEle, 0);
 	}
 
-
-	
+	printf("\n");	
 	int weightsNum = 0;
 	this->m_trainable = false;
-	printf("\n");
+
+	// create the MDNUnits
 	for (int i=0; i<numEle; i++){
-	    unitS = (int)m_mdnConfigVec[1+i*5];
-	    unitE = (int)m_mdnConfigVec[2+i*5];
-	    unitSOut = (int)m_mdnConfigVec[3+i*5];
-	    unitEOut = (int)m_mdnConfigVec[4+i*5];
-	    mdnType  = (int)m_mdnConfigVec[5+i*5];
+	    unitS    = (int)m_mdnConfigVec[1+i*5];  // start dimension in output of previous layer
+	    unitE    = (int)m_mdnConfigVec[2+i*5];  // end dimension in output of previous layer
+	    unitSOut = (int)m_mdnConfigVec[3+i*5];  // start dimension in output feature
+	    unitEOut = (int)m_mdnConfigVec[4+i*5];  // end dimension in output feature
+	    mdnType  = (int)m_mdnConfigVec[5+i*5];  // MDNUnit type
 	    
+	    // binomial distribution (parametrized as sigmoid function)
 	    if (mdnType==MDN_TYPE_SIGMOID){
 		mdnUnit = new MDNUnit_sigmoid<TDevice>(unitS, unitE, unitSOut, unitEOut, mdnType, 
 						       precedingLayer, this->size());
 		m_mdnParaDim += (unitE - unitS);
 		outputSize += (unitE - unitS);
 		printf("MDN sigmoid\n");
+		
+	    // multi-nomial distribution (parameterized by softmax function)
 	    }else if(mdnType==MDN_TYPE_SOFTMAX){
 		mdnUnit = new MDNUnit_softmax<TDevice>(unitS, unitE, unitSOut, unitEOut, mdnType, 
 						       precedingLayer, this->size());
@@ -223,7 +241,9 @@ namespace layers {
 		outputSize += 1;
 		printf("MDN softmax\n");
 
+	    // Gaussian mixture distribution
 	    }else if(mdnType > 0){
+		
 		// the MDNUnit mixture dynamic unit (either specified by --mdnDyn or model option)
 		// if the model (.autosave) has specified it, ignores the arguments
 		bool tmpTieVarianceFlag = ((flagTieVariance.size()>0) ?
@@ -236,14 +256,23 @@ namespace layers {
 					   (flagTrainable[i])       :
 					   (flagTrainable_arg[i]));
 		
-		printf("MDN mixture: trainable: %d, tieVariance %d, #parameter ", 
+		printf("MDN mixture: trainable: %2d, tieVariance %d, #parameter ", 
 		       tmpTrainableFlag, tmpTieVarianceFlag);
 		int featureDim;   
 		int thisWeightNum; 
 
 		switch (tmpTrainableFlag)
-		    {
-			
+		{	
+		    // Due to historical reason, the coding here is quite complex
+		    // the original scheme
+		    // 0 : non-trainable mixture
+		    // 1 : 1st AR, time axis
+		    // 2 : dynamic AR, parameter predicted by network
+		    // 3 : 2st AR, time axis
+		    // 4-5: 1-2 AR, dimension axis
+		    // 6-7: 1-2 AR, dimension and time axis
+		    // else: AR, time axis
+		    
 		    // trainable unit with dynamic link (weight predicted by the network)
 		    case MDNUNIT_TYPE_2:
 			mdnUnit = new MDNUnit_mixture_dynSqr<TDevice>(
@@ -267,21 +296,26 @@ namespace layers {
 		    default:
 			int dynDirection;
 			int lookBackStep;
+			
 			if (tmpTrainableFlag < 0){
 			    printf("The value in --mdnDyn can only be [0-9]");
 			    throw std::runtime_error("Error configuration --mdnDyn");
 			}else if (tmpTrainableFlag <= 3){
 			    // AR along the time axis
 			    dynDirection = MDNUNIT_TYPE_1_DIRECT;
+			    // tmpTrainableFlag = 1 or 2
 			    lookBackStep = (tmpTrainableFlag==1)?(1):(tmpTrainableFlag-1);
-			    
 			}else if (tmpTrainableFlag <= 5){
 			    // AR along the dimension axis
 			    dynDirection = MDNUNIT_TYPE_1_DIRECD;
 			    lookBackStep = tmpTrainableFlag - 3;
-			}else{
+			}else if (tmpTrainableFlag <= 7){
 			    // AR long both time and dimension axes
 			    dynDirection = MDNUNIT_TYPE_1_DIRECB;
+			    lookBackStep = tmpTrainableFlag - 5;
+			}else{
+			    // AR along the time axis
+			    dynDirection = MDNUNIT_TYPE_1_DIRECT;
 			    lookBackStep = tmpTrainableFlag - 5;
 			}
 			
@@ -299,14 +333,14 @@ namespace layers {
 					lookBackStep, tmpTrainableFlag, dynDirection);
 			weightsNum += thisWeightNum;
 			this->m_trainable = true;
-			printf("%d\n", thisWeightNum);
+			printf("%-8d, AR order and direction: %d %d\n", 
+			       thisWeightNum, lookBackStep, dynDirection);
 			break;
-		    }
-		
+		}
 		m_mdnParaDim += (unitE - unitS);
-
+		
+		// with dynamic link (time-variant AR)
 		if (tmpTrainableFlag == MDNUNIT_TYPE_2){
-		    // with dynamic link
 		    if (tmpTieVarianceFlag){
 			// K mixture weight, K*Dim mean, K*1 variance, Dim a, Dim b
 			outputSize += ((unitE - unitS)-2*mdnType-3*(unitEOut - unitSOut))/mdnType;

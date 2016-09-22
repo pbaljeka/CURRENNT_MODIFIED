@@ -438,11 +438,11 @@ namespace {
         {
 
 	    real_t *targetClass = (output + (outputIdx*layerSizeOut+startDOut));
-            // calculate the CEE
+	    // calculate the CEE
             if (targetClass < 0)
                 return 0;
             else {
-                long int Idx    = outputIdx * layerSize + (long int)targetClass;
+                int Idx    = outputIdx * layerSize + (int)(*targetClass);
                 real_t targetProb = helpers::max(helpers::NumericLimits<real_t>::min(), 
 						 prob[Idx]);
                 return -1*log(targetProb);
@@ -1098,6 +1098,79 @@ namespace {
         }
     };
     
+    struct TanhAutoRegConvolution
+    {
+	// This function converts the poles of cascade form AR into coefficients of classical form
+	// 
+	int featureDim;
+	int backOrder;
+	real_t *weightPoles;     // pointer to the poles of AR
+	real_t *weightCoef1;     // pointer to the buffer for the coefficient of classical form
+	real_t *weightCoef2;     // pointer to the second buffer 
+	bool flagnegative;       // whether multiply -1
+	
+	__host__ __device__ void operator() (const int dimIdx) const
+	{
+	    // assume weightCoef1 and weightCoef2 are initilized as zero
+	    
+	    // for n == 1
+	    weightCoef1[dimIdx] = 1;
+	    weightCoef1[dimIdx + featureDim] = -1 * 
+		activation_functions::Tanh::fn(weightPoles[dimIdx]);
+
+	    // for n = 2:(backOrder+1)
+	    for (int n = 2; n <= backOrder; n++){
+		for (int i = 1; i <= n; i++){
+		    weightCoef2[dimIdx + i*featureDim] = 
+			(weightCoef1[dimIdx + (i-1) * featureDim]
+			 * (-1) *
+			 activation_functions::Tanh::fn(weightPoles[dimIdx + (n-1) * featureDim]));
+		}
+		for (int i = 1; i <= n; i++){
+		    weightCoef1[dimIdx + i*featureDim] = (weightCoef1[dimIdx + i * featureDim]
+							  +
+							  weightCoef2[dimIdx + i * featureDim]);
+		}
+	    }
+	    
+	    // multiply -1
+	    if (flagNegative){
+		for (int n = 1; n <= backOrder; n++){
+		    weightCoef1[dimIdx + n*featureDim] = -1 * weightCoef1[dimIdx + n*featureDim];
+		}
+	    }
+	}
+    };
+    
+    struct TanhAutoRegGradientPre
+    {
+	int featureDim;
+	int backOrder;
+	real_t *weightPtr;
+	real_t *weightBuff;
+	
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    
+	    int featIndex = idx % featureDim; 
+	    int temp      = idx / featureDim;  
+	    int orIndex1  = temp % (backOrder-1);
+	    int orIndex2  = temp / (backOrder-1);
+	    
+	    real_t *sourcePtr = weightPtr + ((orIndex1 < orIndex2)?
+					     (orIndex1 * featureDim + featIndex):
+					     ((orIndex1+1) * featureDim + featIndex));
+	    real_t *targetPtr = orIndex2 * featureDim * (backOrder + 1) +
+		                orIndex1 * featureDim +
+		                featIndex;
+	    
+	    (*targetPtr) = (*sourcePtr);
+	}
+    };
+
+    
+
+
     struct ShiftBiasStep2TiedCaseAutoReg
     {
 	// Accumulating the statistics for BP on the linear regression part W^T o+b
@@ -2700,14 +2773,22 @@ namespace layers {
 	    
 	    int n = this->m_precedingLayer.curMaxSeqLength();
 	    n = n*this->m_precedingLayer.parallelSequences();
-		
+	    
+	    /*Cpu::real_vector temp1 = targets;
+	    Cpu::real_vector temp2 = this->m_paraVec;
+	    for (int i = 0; i<n; i++){
+		int tarclass = temp1[i * fn.layerSizeOut + fn.startDOut];
+		int idx = i * fn.layerSize + tarclass;
+		tmp += -1*internal::safeLog(temp2[idx]);
+		}*/
+
 	    tmp = thrust::transform_reduce(
 		  thrust::counting_iterator<int>(0),
 		  thrust::counting_iterator<int>(0)+n,
 		  fn,
-		  (real_t)0,
+		  (real_t)0.0,
 		  thrust::plus<real_t>()
-	  );
+		  );
 
 	}}
 	return tmp;
@@ -3844,19 +3925,28 @@ namespace layers {
 	const Configuration &config = Configuration::instance();
 	m_tanhReg      = config.tanhAutoregressive();
 	if (m_backOrder > 2 && m_tanhReg){
-	    printf("Tanh Autoregressive is not implemented for step order > 2");
-	    m_tanhReg  = 0;
-	    m_wTransBuff.clear();
+	    //printf("Tanh Autoregressive is not implemented for step order > 2");
+	    //m_tanhReg  = 0;
+	    //m_wTransBuff.clear();
+	    
+	    // dimension * (backorder + 1) * 2 * (backorder + 1)
+	    m_wTransBuff.resize(this->m_featureDim*(m_backOrder+1)*(m_backOrder*3+2), 0);
+	    
 	}else{
 	    m_wTransBuff.resize((this->m_featureDim + 1) * 4, 0); // the maximum size it can have
 	}
 
 	// length of the AR parameter 
+	// Note: m_weightShiftToDim and m_wTransBuffShiftToDim are two general
+	//       pointers. Their usesage are different in different cases
 	if (dynDirection == MDNUNIT_TYPE_1_DIRECT){
 	    m_linearPartLength = this->m_featureDim;
 	    m_biasPartLength   = this->m_featureDim;
-	    m_weightShiftToDim = 0;
-	    m_wTransBuffShiftToDim = 0;
+	    // m_wTransBuff contains two blocks for forward and backward computation
+	    // 2*m_wTransBuffShiftToDim points to the first element for backward computation
+	    m_wTransBuffShiftToDim = this->m_featureDim * (m_backOrder + 1);
+	    // m_weightShiftToDim points to the position for convolution in backward computation 
+	    m_weightShiftToDim     = this->m_featureDim * (m_backOrder + 1) * (m_backOrder+1) * 2;
 	}else if (dynDirection == MDNUNIT_TYPE_1_DIRECD){
 	    m_linearPartLength = 1;
 	    m_biasPartLength   = 1;
@@ -3865,11 +3955,12 @@ namespace layers {
 	}else{
 	    m_linearPartLength = this->m_featureDim + 1;
 	    m_biasPartLength   = this->m_featureDim + 1;
+	    // this is complicated, due to historical reason
 	    m_weightShiftToDim = this->m_featureDim * (m_backOrder + 1);
 	    m_wTransBuffShiftToDim = this->m_featureDim * 4;
 	}
 	
-	
+	// m_oneVec is used to accumulate the gradient in backpropagation stage
 	cpu_real_vector temp;	
 	temp.resize(m_maxTime * numMixture * this->m_featureDim, 1.0);
 	m_oneVec    = temp;
@@ -3887,7 +3978,8 @@ namespace layers {
     }
     
      template <typename TDevice>
-    void MDNUnit_mixture_dyn<TDevice>::linkWeight(real_vector& weights, real_vector& weightsUpdate)
+    void MDNUnit_mixture_dyn<TDevice>::linkWeight(real_vector& weights, 
+						  real_vector& weightsUpdate)
     {                                                           
 	m_weights          = &weights; // point to the vector data (but with bias)
 	
@@ -3931,7 +4023,7 @@ namespace layers {
 		 * this->m_weights is the shared weight vector
 		 * **********************************/
 		//fn1.weight     = helpers::getRawPointer(*this->m_weights);
-		fn1.weight     = this->m_weightsPtr;
+		 fn1.weight     = this->m_weightsPtr;
 	    
 		fn1.weightOut  = helpers::getRawPointer(this->m_wTransBuff);
 		thrust::for_each(
@@ -3975,6 +4067,39 @@ namespace layers {
 
 	    }
 	}
+	
+	// For AR based on high-order filter
+	if ((this->m_tanhReg >0) && this->m_backOrder >= 3){
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT){
+		
+		// initialize m_wTransBuff as zero
+		thrust::fill(this->m_wTransBuff.begin(), this->m_wTransBuff.end(), (real_t)0.0);
+		
+		// convert the poles of casecade AR into coefficients of classical AR
+		// based on convolution
+		{{
+		    internal::TanhAutoRegConvolution fn;
+		    fn.backOrder   = this->m_backOrder;
+		    fn.featureDim  = this->m_featureDim;
+		    fn.weightPoles = this->m_weightsPtr;
+		    // the coefficient buffer
+		    fn.weightCoef1 = helpers::getRawPointer(this->m_wTransBuff);
+		    // the convolution buffer
+		    fn.weightCoef2 = helpers::getRawPointer(this->m_wTransBuff) 
+			             + m_wTransBuffShiftToDim; 
+		    fn.flagnegative= true;
+		    
+		    thrust::for_each(
+				     thrust::counting_iterator<int>(0),
+				     thrust::counting_iterator<int>(0) + this->m_featureDim,
+				     fn);
+
+		}}
+	    }else{
+		printf("high order AR along dimension axis is not implemented yet.");
+		throw std::runtime_error("Implementation Error");
+	    }
+	}
     }
 	
     // Just use the MDNUnit_mixture functions
@@ -4009,12 +4134,17 @@ namespace layers {
 			fn2.tieVar       = this->m_tieVar;
 			fn2.targets      = helpers::getRawPointer(targets);
 		    
+			// Tanh function (low order)
 			if (this->m_tanhReg && this->m_backOrder < 3){
 			    fn2.linearPart = helpers::getRawPointer(this->m_wTransBuff) + 
 				             (stepBack - 1 + 2) * this->m_featureDim;
+			// Tanh function (high order)
+			}else if (this->m_tanhReg){
+			    fn2.linearPart = helpers::getRawPointer(this->n_wTransBuff) +
+				             stepBack * this->m_featureDim;
 			}else{
-			    fn2.linearPart = this->m_weightsPtr 
-				             +(stepBack-1) * this->m_featureDim;
+			    fn2.linearPart = this->m_weightsPtr +
+				             (stepBack-1) * this->m_featureDim;
 			}
 		    
 			fn2.biasPart     = this->m_weightsPtr + 
@@ -4117,7 +4247,8 @@ namespace layers {
 		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB){
 
 		// step.1 calculate the gradient
-		if (this->m_tanhReg){
+		// when tanh function is used and the order is low
+		if (this->m_tanhReg && this->m_backOrder < 3){
 		    internal::ShiftBiasStep2TiedCaseAutoReg fn2;
 		    fn2.featureDim   = this->m_featureDim;
 		    fn2.mixNum       = this->m_numMixture;
@@ -4138,6 +4269,8 @@ namespace layers {
 				     thrust::counting_iterator<int>(0)+n,
 				     fn2);
 		}else{
+		    // when tanh is used and the AR order is high
+		    // or, it is the classical form of AR
 		    internal::ShiftBiasStep2TiedCase fn2;
 		
 		    fn2.featureDim   = this->m_featureDim;
@@ -4183,6 +4316,17 @@ namespace layers {
 						  );
 		// sum the gradients
 		gradW.assignProduct(diffW, false, onevec, false);
+		
+		// for high order AR
+		if (this->m_tanhReg && this->m_backOrder >= 3){
+		    // step1. prepare the weights
+		    
+		    // step2. convolution 
+		    
+		    // step3. get the gradients
+		    
+		}
+		
 		
 		/******************* FATAL ERROR ******************
 		 *  Remember to shift the gradb
