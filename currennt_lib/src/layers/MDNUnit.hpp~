@@ -31,13 +31,17 @@
 
 
 #define MDNUNIT_TYPE_0 0   // TYPE TAG for sigmoid, softmax, mixture
-#define MDNUNIT_TYPE_1 1   // Type tag for mixture with trainable [w,b] as parameter for the output layer
+#define MDNUNIT_TYPE_1 1   // Type tag for mixture with trainable [w,b]  for the output layer
 #define MDNUNIT_TYPE_2 2   // Type tag for mixture with [w,b] predicted by the NN
+
+#define MDNUNIT_TYPE_1_DIRECT 0 // Type 1 dyn, time axis
+#define MDNUNIT_TYPE_1_DIRECD 1 // Type 1 dyn, dimension axis
+#define MDNUNIT_TYPE_1_DIRECB 2 // Type 1 dyn, both axes
 
 namespace layers{
     
     // utilizes by MDNUnits
-    int MixtureDynWeightNum(int featureDim, int mixNum, int backOrder);
+    int MixtureDynWeightNum(int featureDim, int mixNum, int backOrder, int dynDirection);
 
     /********************************************************
      MDNUnit: describes the distribution of the target data
@@ -303,13 +307,22 @@ namespace layers{
 	int          m_paral;               // number of utterances in parallel 
 	int          m_totalTime;           // m_curMaxLength * m_paral
 	int          m_backOrder;           // y[t] - y[t-1] - ... - [y-m_backOrder]
-
+	
+	// Add 0822
+	int          m_dynDirection;        // 0: along the time axis (default)
+	                                    // 1: along the dimension axis
+	                                    // 2: along the time and dimension axes
+	int          m_linearPartLength;    // the length of the linear scale parameter
+	int          m_biasPartLength;      // the length of the bias part
+	int          m_weightShiftToDim;    // shift to the pointer of AR for dimension
+	int          m_wTransBuffShiftToDim;// shift in wTransBuff
     public:
 	MDNUnit_mixture_dyn(int startDim, int endDim, int startDimOut, int endDimOut, 
 			    int type, Layer<TDevice> &precedingLayer, int outputSize,
 			    const bool tieVar, int weightStart, int weightNum,
 			    int backOrder,
-			    const int trainable = MDNUNIT_TYPE_1);
+			    const int trainable    = MDNUNIT_TYPE_1,
+			    const int dynDirection = MDNUNIT_TYPE_1_DIRECT);
 
 	virtual ~MDNUnit_mixture_dyn();
 		

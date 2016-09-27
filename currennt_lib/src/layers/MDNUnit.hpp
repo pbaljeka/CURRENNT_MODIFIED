@@ -307,7 +307,7 @@ namespace layers{
 	int          m_paral;               // number of utterances in parallel 
 	int          m_totalTime;           // m_curMaxLength * m_paral
 	int          m_backOrder;           // y[t] - y[t-1] - ... - [y-m_backOrder]
-	
+	int          m_arrmdnLearning;      
 	// Add 0822
 	int          m_dynDirection;        // 0: along the time axis (default)
 	                                    // 1: along the dimension axis
@@ -316,6 +316,8 @@ namespace layers{
 	int          m_biasPartLength;      // the length of the bias part
 	int          m_weightShiftToDim;    // shift to the pointer of AR for dimension
 	int          m_wTransBuffShiftToDim;// shift in wTransBuff
+
+	
     public:
 	MDNUnit_mixture_dyn(int startDim, int endDim, int startDimOut, int endDimOut, 
 			    int type, Layer<TDevice> &precedingLayer, int outputSize,

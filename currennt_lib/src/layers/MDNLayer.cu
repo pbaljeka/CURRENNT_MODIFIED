@@ -66,6 +66,8 @@
 #include <cmath>
 
 
+#define MIXTUREDYN_INITVARIANCE 0.01
+
 namespace layers {
     
 
@@ -434,7 +436,18 @@ namespace layers {
 		
 	    }else {
 		// No other initialization methods implemented yet
+		// Add 0923, we need random initialization here
+		// The problem is that, for high order filter, we need to break the symmetry of
+		// of the parameter
 		weights.resize(weightsNum, 0.0);	
+		static boost::mt19937 *gen = NULL;
+		if (!gen) {
+		    gen = new boost::mt19937;
+		    gen->seed(config.randomSeed()+101);
+		}
+		boost::random::normal_distribution<real_t> dist(0.0, MIXTUREDYN_INITVARIANCE);
+                for (size_t i = 0; i < weights.size(); ++i)
+                    weights[i] = dist(*gen);
 	    }
 	    printf("\nMDN trainable mixture is used. The number of parameter is %d\n", weightsNum);
 	    m_sharedWeights       = weights;

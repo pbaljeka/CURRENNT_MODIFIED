@@ -176,8 +176,9 @@ Configuration::Configuration(int argc, const char *argv[])
 	("tieVariance",         po::value(&m_tiedVariance)  ->default_value(true,"true"), "Whether the variance should be tied across dimension for all mixture in MDN mixture unit? (default true) Note, this argument will be ignored if tieVarianceFlag is specified in the model (.autosave)")
 	("mdn_sampleParaVec",   po::value(&m_mdnVarScaleGen)->default_value(""), "The binary vector of coefficients to scale each dimension of the variance of the mixture model. Dimension of the vector should be equal to the dimension of the target feature vector.")
 	("mdnDyn",            po::value(&m_mdnDyn) ->default_value(""), "Type of MDN dynamic model. Please specify a string of digitals as num1_num2_num3..., where the number of num is equal to the number of MDN units in the output MDN layer. \n\t0: normal MDN;\n\t1: 1-order AR;\n\t2: context-dependent AR;\n\t3: 2-order AR (default 0)\n Note, this argument will be ignored if trainableFlag is specified in the model (.autosave). Also note, due to historical reason, 2 is reserved for context-dependent AR")
-	("tanhAutoReg",       po::value(&m_tanhAutoregressive) ->default_value(0), "Whether utilizes the tanh to transform the weight for autogressive model (default not)")
+	("tanhAutoReg",       po::value(&m_tanhAutoregressive) ->default_value(1), "Whether utilizes the tanh to transform the weight for autogressive model (default yes)")
 	("ReserverZeroFilter", po::value(&m_setDynFilterZero) ->default_value(0), "Reserved option for MDN Mixture Dyn units. Don't use it if you don't know it.")
+	("arrmdnLearning",     po::value(&m_arrmdnLearning)   ->default_value(0), "An option to set the learning rate for ARRMDN. Don't use it if you don't know the code")
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -825,6 +826,10 @@ const int& Configuration::zeroFilter() const
     return m_setDynFilterZero;
 }
 
+const int& Configuration::arrmdnLearning() const
+{
+    return m_arrmdnLearning;
+}
 
 const int& Configuration::weNoiseStartDim() const
 {
@@ -836,7 +841,7 @@ const int& Configuration::weNoiseEndDim() const
     return m_weNoiseEndDim;
 }
 
-const real_t&       Configuration::weNoiseDev() const
+const real_t& Configuration::weNoiseDev() const
 {
     return m_weNoiseDev;
 }

@@ -3978,6 +3978,9 @@ namespace layers {
 	}else{
 	    m_wTransBuff.clear();
 	}
+
+	m_arrmdnLearning = config.arrmdnLearning();
+
 	/* ### 
 	if (m_backOrder > 2 && m_tanhReg){
 	    //printf("Tanh Autoregressive is not implemented for step order > 2");
@@ -4209,6 +4212,7 @@ namespace layers {
 			    //    where the AR is 1 - \sum_i^N a_i z^-1
 			    fn2.linearPart = helpers::getRawPointer(this->m_wTransBuff) +
 				             stepBack * this->m_featureDim;
+			    
 			}else{
 			    fn2.linearPart = this->m_weightsPtr +
 				             (stepBack-1) * this->m_featureDim;
@@ -4371,8 +4375,15 @@ namespace layers {
 		 * But it turns out this learning rate works better !
 		 *************************************************/
 		// thrust::fill(this->m_oneVec.begin(), this->m_oneVec.end(), 1.0);
-		thrust::fill(this->m_oneVec.begin(), this->m_oneVec.end(), 
-			     1.0/this->m_numMixture * this->m_totalTime);
+		if (this->m_arrmdnLearning == 1){
+		    thrust::fill(this->m_oneVec.begin(), this->m_oneVec.end(),1.0);
+		}else if (this->m_arrmdnLearning == 2){
+		    thrust::fill(this->m_oneVec.begin(), this->m_oneVec.end(), 
+				 1.0/this->m_numMixture / this->m_totalTime);
+		}else{
+		    thrust::fill(this->m_oneVec.begin(), this->m_oneVec.end(), 
+				 1.0/this->m_numMixture * this->m_totalTime);
+		} 
 		
 		helpers::Matrix<TDevice> onevec  (&this->m_oneVec, 
 						  this->m_numMixture * this->m_totalTime, 

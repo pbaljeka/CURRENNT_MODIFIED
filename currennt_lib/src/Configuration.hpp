@@ -125,7 +125,8 @@ private:
     std::string m_printWeightPath;
     std::string m_mdnVarScaleGen;    // the vector to scale each dimension of the output
     std::string m_mdnDyn;            // whether incorporate dynamic feature
-    
+    int         m_arrmdnLearning;    // an option for the learning rate of arrmdn
+
     int      m_tanhAutoregressive;   //
     int      m_setDynFilterZero;     // 
     
@@ -583,6 +584,8 @@ public:
     const int& tanhAutoregressive() const;
 
     const int& zeroFilter() const;
+    
+    const int& arrmdnLearning() const;
 };
 
 
