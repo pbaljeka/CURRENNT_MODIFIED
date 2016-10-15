@@ -249,7 +249,7 @@ namespace {
             // calculate the cell state error
             real_t ogPeepWeight = ogPeepWeights[blockIdx];
             real_t cellStateErr = ogAct * cell_output_act_fn_t::deriv(cell_output_act_fn_t::fn(cellState)) * outputErr + ogPeepWeight * ogDelta;
-
+	    
             if (!firstCall) {
                 real_t nextFgAct        = fgActs         [outputIdx - prevOutputDistance];
                 real_t nextCellStateErr = cellStateErrors[outputIdx - prevOutputDistance];

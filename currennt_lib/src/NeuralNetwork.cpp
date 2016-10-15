@@ -474,6 +474,7 @@ bool NeuralNetwork<TDevice>::initWeNoiseOpt(const int weNoiseStartDim, const int
     else if (!inputLayer->initWeNoiseOpt(weNoiseStartDim, weNoiseEndDim, weNoiseDev)){
 	throw std::runtime_error("Fail to initialize for we updating");
     }
+    return true;
 }
 
 
@@ -579,6 +580,14 @@ void NeuralNetwork<TDevice>::maskWeight()
 }
 
 template <typename TDevice>
+void NeuralNetwork<TDevice>::notifyCurrentEpoch(const int trainingEpoch)
+{
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layer->setCurrTrainingEpoch(trainingEpoch);
+    }
+}
+
+template <typename TDevice>
 void NeuralNetwork<TDevice>::reInitWeight()
 {
     printf("Reinitialize the weight\n");
@@ -603,6 +612,20 @@ void NeuralNetwork<TDevice>::initOutputForMDN(const data_sets::DataSetMV &datamv
     }
 }
 
+template <typename TDevice>
+void NeuralNetwork<TDevice>::readMVForOutput(const data_sets::DataSetMV &datamv)
+{
+    BOOST_FOREACH (boost::shared_ptr<layers::Layer<TDevice> > &layer, m_layers){
+	layers::PostOutputLayer<TDevice>* outputLayer = 
+	    dynamic_cast<layers::PostOutputLayer<TDevice>*>(layer.get());
+	if (outputLayer){
+	    outputLayer->readMV(datamv.outputM(), datamv.outputV());
+	    printf("Read mean and variance into output layer \t");
+	}
+    }
+}
+
+
 /* importWeights from pre-trained model
    initialization for each layer is controled by ctrStr
 */
@@ -618,8 +641,7 @@ void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc,
 	    throw std::runtime_error("Length of trainedParameterCtr unequal #layer.");
 	}else if (ctrStr.size()>0){
 	    for (int i=0; i<ctrStr.size(); i++)
-		if (ctrStr[i]=='0')
-		    tempctrStr[i] = 0;
+		tempctrStr[i] = ctrStr[i]-'0';
 	}else{
 	    // nothing
 	}
@@ -648,9 +670,9 @@ void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc,
 		    dynamic_cast<layers::LstmLayerCharW<TDevice>*>(layer.get());
 		if (LstmCharWLayer){
 		    // Because LstmCharWLayer is special
-		    Layer->reReadWeight(weightsSection, LstmCharWLayer->lstmSize());
+		    Layer->reReadWeight(weightsSection, LstmCharWLayer->lstmSize(), tempctrStr[cnt]);
 		}else{
-		    Layer->reReadWeight(weightsSection, Layer->size());
+		    Layer->reReadWeight(weightsSection, Layer->size(), tempctrStr[cnt]);
 		}
 	    // Read in the parameter for MDN layer with trainable link
 	    }else if(tempctrStr[cnt] > 0){
@@ -658,7 +680,7 @@ void NeuralNetwork<TDevice>::importWeights(const helpers::JsonDocument &jsonDoc,
 		    dynamic_cast<layers::MDNLayer<TDevice>*>(layer.get());
 		if (mdnlayer && mdnlayer->flagTrainable()){
 		    printf("%d ", cnt);
-		    mdnlayer->reReadWeight(weightsSection);
+		    mdnlayer->reReadWeight(weightsSection, tempctrStr[cnt]);
 		}
 	    }else{
 		// skip

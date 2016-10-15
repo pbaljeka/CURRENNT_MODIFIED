@@ -255,11 +255,16 @@ int trainerMain(const Configuration &config)
 	/* Add 0514 Wang: read the data mean and variance (MV), and initialize MDN */
 	// step1: read MV if provided. MV maybe not necessary
 	boost::shared_ptr<data_sets::DataSetMV> dataMV=boost::make_shared<data_sets::DataSetMV>();
-	if (config.datamvPath().size()>0 && config.continueFile().empty())
+	if (config.datamvPath().size()>0){
 	    dataMV = boost::make_shared<data_sets::DataSetMV>(config.datamvPath());
+	    neuralNetwork.readMVForOutput(*dataMV);
+	}
+	
 	// step2: initialize for MDN 
-	if (config.trainingMode() && config.continueFile().empty())
-	    neuralNetwork.initOutputForMDN(*dataMV);
+	/* As data has been normalized, no need to read MV for MDN
+	  if (config.trainingMode() && config.continueFile().empty())
+	  neuralNetwork.initOutputForMDN(*dataMV);
+	*/
 	// Note: config.continueFile().empty() make sure it is the first epoch
 
 
@@ -361,9 +366,10 @@ int trainerMain(const Configuration &config)
 		    optimizer->reinit();
 		    optimizer->adjustLR(1);
 		    neuralNetwork.reInitWeight();
-		    neuralNetwork.initOutputForMDN(*dataMV);
+		    //neuralNetwork.initOutputForMDN(*dataMV);
 		    if (++blowedTime > 10){
-			printf("Learning rate tuning timeout. Please change the network structure\n");
+			printf("Learning rate tuning timeout\n");
+			printf("Please change configuration and re-train\n");
 			finished = true;
 		    }
 		    continue;

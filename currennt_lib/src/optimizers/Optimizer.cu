@@ -46,6 +46,8 @@ namespace optimizers {
 	
 	// Add 0413 Wang : for weight Mask
 	m_neuralNetwork.maskWeight();
+	// Add 0928 Wang : notify the current training epoch number
+	m_neuralNetwork.notifyCurrentEpoch(m_curEpoch);
 
         boost::shared_ptr<data_sets::DataSetFraction> frac;
         bool firstFraction = true;
@@ -55,7 +57,7 @@ namespace optimizers {
             // compute forward pass and calculate the error
             m_neuralNetwork.loadSequences(*frac);
             m_neuralNetwork.computeForwardPass();
-            error += m_neuralNetwork.calculateError();
+            error += (m_neuralNetwork.calculateError()/ds.totalSequences());
 	    
 	    // add 0511 Wang : check for Nan
 	    if (error != error){
@@ -169,7 +171,7 @@ namespace optimizers {
         // normalize the errors
 
 	// strange, why totalSequences? when parallel sequences are calculated, there may be bias
-        error /= ds.totalSequences();
+        //error /= ds.totalSequences();
 	//error /= ds.totalTimesteps();
 
         *classError /= (real_t)ds.totalTimesteps();

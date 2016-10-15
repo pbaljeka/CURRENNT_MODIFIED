@@ -1217,7 +1217,21 @@ namespace {
 	}
     };
 
+    struct ARRMDNGradientsSetZero
+    {
+	int     keepGradient;   // which order should be updated ? (0 means the 1st order)
+	int     featureDim;     // dimension of the feature vector
+	real_t *gradients;      
 
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    if (keepGradient < 0 || keepGradient == (idx / featureDim)){
+		
+	    }else{
+		*(gradients + idx) = 0.0;
+	    }
+	}
+    };
 
     struct ShiftBiasStep2TiedCaseAutoReg
     {
@@ -2281,6 +2295,20 @@ namespace layers {
     {	
 	// default, untrainable units doesn't require trainable weight
     }
+
+    // set the current training epoch number
+    template <typename TDevice>
+    void MDNUnit<TDevice>::setCurrTrainingEpoch(const int currTrainingEpoch)
+    {
+	m_currTrainingEpoch = currTrainingEpoch;
+    }
+    
+    template <typename TDevice>
+    int & MDNUnit<TDevice>::getCurrTrainingEpoch()
+    {
+	return m_currTrainingEpoch;
+    }
+
 
     /********************************************************
      MDNUnit_sigmoid Definition
@@ -3974,19 +4002,23 @@ namespace layers {
 	m_tanhReg      = config.tanhAutoregressive();
 	
 	if (m_tanhReg){
+	    // for the tanh-based casecade filter form, the poles need to be transformed 
+	    // into coefficients of AR filter
+	    // m_wTransBuff: the buffer for coefficients convolution
 	    m_wTransBuff.resize(this->m_featureDim*(m_backOrder+1)*(m_backOrder*3+2), 0);
 	}else{
+	    // no need to use additional buffer 
 	    m_wTransBuff.clear();
 	}
 
-	m_arrmdnLearning = config.arrmdnLearning();
-
+	m_arrmdnLearning  = config.arrmdnLearning();
+	m_arrmdnUpInter   = config.arRMDNUpdateInterval();
+ 
 	/* ### 
 	if (m_backOrder > 2 && m_tanhReg){
 	    //printf("Tanh Autoregressive is not implemented for step order > 2");
 	    //m_tanhReg  = 0;
 	    //m_wTransBuff.clear();
-	    
 	    // dimension * (backorder + 1) * 2 * (backorder + 1)
 	    m_wTransBuff.resize(this->m_featureDim*(m_backOrder+1)*(m_backOrder*3+2), 0);
 	    
@@ -4066,13 +4098,12 @@ namespace layers {
 	// do the normal feedforward for the MDN part
 	this->MDNUnit_mixture<TDevice>::computeForward();
 
-	// For AR filter based on tanh(\alpha),
-	// transform the tanh(\alpha) to the coefficients of AR filter
 	
+	// This code block is obsolete
+	// For AR filter based on tanh(\alpha),
+	// transform the tanh(\alpha) to the coefficients of AR filter	
 	if ((this->m_tanhReg >0) && this->m_backOrder < 0){
-	    /* ###
-	       if ((this->m_tanhReg >0) && this->m_backOrder < 3){
-	    */  
+	    // if ((this->m_tanhReg >0) && this->m_backOrder < 3){
 	    // Update the AR along the time axis
 	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT || 
 		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
@@ -4099,8 +4130,7 @@ namespace layers {
 				 thrust::counting_iterator<int>(0),
 				 thrust::counting_iterator<int>(0) + this->m_featureDim * 2,
 				 fn2);
-	    }
-	    
+	    }   
 	    // Update the AR along the dimension axis
 	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECD || 
 		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
@@ -4125,15 +4155,13 @@ namespace layers {
 				 thrust::counting_iterator<int>(0),
 				 thrust::counting_iterator<int>(0) + 2,
 				 fn2);
-
 	    }
 	}
 	
-	// For AR based on high-order filter
+	// For AR based on casecade form 
+	// conver the poles of AR to the coefficients of AR model
 	if ((this->m_tanhReg >0) && this->m_backOrder >= 1){
-	    /* ###
-	       if ((this->m_tanhReg >0) && this->m_backOrder >= 3){
-	    */
+	    //   if ((this->m_tanhReg >0) && this->m_backOrder >= 3){
 	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT){
 		
 		// initialize m_wTransBuff as zero
@@ -4161,17 +4189,13 @@ namespace layers {
 
 		}}
 	    }else{
-		printf("high order AR along dimension axis is not implemented yet.");
+		printf("AR based on casecade form is not implemented along dimension axis");
 		throw std::runtime_error("Implementation Error");
 	    }
 	}
     }
+
 	
-    // Just use the MDNUnit_mixture functions
-    // initPreOutput
-    // computeForward
-    
-    // Redefine the function
     template <typename TDevice>
     real_t MDNUnit_mixture_dyn<TDevice>::calculateError(real_vector &targets)
     {   
@@ -4199,20 +4223,18 @@ namespace layers {
 			fn2.tieVar       = this->m_tieVar;
 			fn2.targets      = helpers::getRawPointer(targets);
 		    
-			// Tanh function (low order)
+			// (obsolete implementation)
 			if (this->m_tanhReg && this->m_backOrder < 0){
-			    /* ### 
-			       if (this->m_tanhReg && this->m_backOrder < 3){ 
-			    */
+			    //if (this->m_tanhReg && this->m_backOrder < 3){ 
 			    fn2.linearPart = helpers::getRawPointer(this->m_wTransBuff) + 
 				             (stepBack - 1 + 2) * this->m_featureDim;
-			// Tanh function (high order)
+			// AR casecade form
 			}else if (this->m_tanhReg){
 			    // the m_wTransBuff stores [1 a_1 ... a_N], 
 			    //    where the AR is 1 - \sum_i^N a_i z^-1
 			    fn2.linearPart = helpers::getRawPointer(this->m_wTransBuff) +
 				             stepBack * this->m_featureDim;
-			    
+			// AR classical form
 			}else{
 			    fn2.linearPart = this->m_weightsPtr +
 				             (stepBack-1) * this->m_featureDim;
@@ -4227,7 +4249,6 @@ namespace layers {
 			fn2.trainableAPos= -1;   // this is useful for mxiture_dynSqr
 			fn2.trainableBPos= -1;   // this is useful for mxiture_dynSqr
 		
-			
 			int n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
 			thrust::for_each(thrust::counting_iterator<int>(0),
 					 thrust::counting_iterator<int>(0)+n,
@@ -4235,12 +4256,12 @@ namespace layers {
 		    }
 		}
 	    }}
+
+	    // Regressio on the dimension axis 
 	    {{
-		// Regressio on the dimension axis
 		if(this->m_dynDirection == MDNUNIT_TYPE_1_DIRECD || 
 		   this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB){
-		   
-		    
+		   		    
 		    for (int stepBack    = 1; stepBack <= this->m_backOrder; stepBack++){
 			internal::ShiftBiasStep1TiedCaseDimensionAxis fn2;
 			
@@ -4301,29 +4322,29 @@ namespace layers {
 	#ifdef MIXTUREDYNDIAGONAL
 	{{
 	    // Graidents computation:
-	    // for \delta{L}/\delta{a_k} = 
-	    // \sum_t^{T}\sum_m_^{M}phi(t,m)(o_t,d - \hat{mu}_t,d^m) / var_t,d^{m}^2 * o_t-k,d
-	    // t: time
-	    // m: mixture
-	    // k: k-th order of AR model
-	    // d: dimension
-	    // phi(t,m): posterior of mixture at time t
-	    // \hat{mu}: the mean transformed by AR
 	    //
-	    // Step1: calculate the gradient for each t, m, d, k
-	    // Step2: sum
+	    // Step1: calculate the gradient for \delta{L}/\delta{a_k}, where
+	    //        a_k is the coefficients of classical AR model 1-\sum_k{a_k}z^{-k}
+	    // Step2: sum gradients over time and mixtures
+	    // Step3: optionally, get the gradients w.r.t poles of casecade AR model
 		
 	    // gradient for the AR on time axis
 	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT || 
 		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB){
 
-		// step.1 calculate the gradient
-		// when tanh function is used and the order is low
-		
+		// step.1 calculate the gradient w.r.t coefficients of classical AR model
+		// \delta{L}/\delta{a_k} = 
+		// \sum_t^{T}\sum_m_^{M}phi(t,m)(o_t,d - \hat{mu}_t,d^m) / var_t,d^{m}^2 * o_t-k,d
+		// t: time
+		// m: mixture
+		// k: k-th order of AR model
+		// d: dimension
+		// phi(t,m): posterior of mixture at time t
+		// \hat{mu}: the mean transformed by AR
+
+		// (obsolete implementation for Tanh AR)
 		if (this->m_tanhReg && this->m_backOrder < 0){
-		    /* ### 
-		       if (this->m_tanhReg && this->m_backOrder < 3){
-		     */
+		    //   if (this->m_tanhReg && this->m_backOrder < 3){
 		    internal::ShiftBiasStep2TiedCaseAutoReg fn2;
 		    fn2.featureDim   = this->m_featureDim;
 		    fn2.mixNum       = this->m_numMixture;
@@ -4343,9 +4364,9 @@ namespace layers {
 		    thrust::for_each(thrust::counting_iterator<int>(0),
 				     thrust::counting_iterator<int>(0)+n,
 				     fn2);
+
+		// implementation to calculate the gradient
 		}else{
-		    // when tanh is used and the AR order is high
-		    // or, it is the classical form of AR
 		    internal::ShiftBiasStep2TiedCase fn2;
 		    
 		    fn2.featureDim   = this->m_featureDim;
@@ -4369,7 +4390,7 @@ namespace layers {
 		}
 		
 		
-		// step2 update the gradients for W	
+		// step2 update the gradients over time and mixtures
 		/*************************************************
 		 * Why did I use 1.0 / this->m_numMixture * this->m_totalTime ?
 		 * But it turns out this learning rate works better !
@@ -4396,7 +4417,7 @@ namespace layers {
 						  1,
 						  this->m_weightStart
 						  );
-		// sum the gradients
+		// sum the gradients for a_k
 		gradW.assignProduct(diffW, false, onevec, false);
 		
 		/******************* FATAL ERROR ******************
@@ -4414,15 +4435,15 @@ namespace layers {
 						  this->m_weightStart + 
 						  this->m_featureDim * this->m_backOrder
 						  );
-		// sum the gradients
+		// sum the gradients for the bias term
 		gradb.assignProduct(diffB, false, onevec, false);
 
-		// for high order AR
+
+		// step3 
+		// calculate the gradients w.r.t the poles of casecade AR
 		if (this->m_tanhReg && this->m_backOrder >= 1){
-		    /* ###
-		       if (this->m_tanhReg && this->m_backOrder >= 3){
-		    */
-		    // step1. prepare the weights
+		    //   if (this->m_tanhReg && this->m_backOrder >= 3){
+		    //   step1. prepare the weights
 		    {{
 			internal::TanhAutoRegGradientPre fn;
 			fn.featureDim = this->m_featureDim;
@@ -4438,7 +4459,7 @@ namespace layers {
 					     fn);
 			}
 		    }}
-		    // step2. convolution 
+		    //   step2. convolution 
 		    {{
 			internal::TanhAutoRegConvolution fn;
 			fn.backOrder   = this->m_backOrder-1;
@@ -4462,10 +4483,9 @@ namespace layers {
 			    thrust::for_each(thrust::counting_iterator<int>(0),
 					     thrust::counting_iterator<int>(0)+this->m_featureDim,
 					     fn);
-			}
-			
+			}			
 		    }}
-		    // step3. get the gradients
+		    //   step3. get the gradients
 		    {{
 			internal::TanhAutoRegGradientTransform fn;
 			fn.featureDim  = this->m_featureDim;
@@ -4488,15 +4508,32 @@ namespace layers {
 					 this->m_featureDim * this->m_backOrder,
 					 fn2);
 		    }}
-		}
-		
+		    
+		// update the classical form AR order by order
+		}else if (this->m_tanhReg == 0 && this->m_arrmdnUpInter > 0){
+		    
+		    int keepGradient = ((this->m_currTrainingEpoch-1)/this->m_arrmdnUpInter);
+		    if (keepGradient < this->m_backOrder){
+			// otherwise, update the specified order
+			{{
+			    internal::ARRMDNGradientsSetZero fn;
+			    fn.keepGradient = keepGradient;
+			    fn.featureDim   = this->m_featureDim;
+			    fn.gradients    = this->m_weightUpdatesPtr;
+			    thrust::for_each(thrust::counting_iterator<int>(0),
+					     thrust::counting_iterator<int>(0) +
+					     this->m_featureDim * this->m_backOrder,
+					     fn);
+			}}
+		    }else{
+			// if all coefficients have been updated for one time, just update all
+		    }
+		}	
 	    }
 
 	    // gradient for the AR on dimension axis
 	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECD || 
 		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB){
-		
-		
 		if (this->m_tanhReg){
 		    internal::ShiftBiasStep2TiedCaseAutoRegDimensionAxis fn2;
 		    fn2.featureDim   = this->m_featureDim;
@@ -4577,7 +4614,7 @@ namespace layers {
 						  this->m_backOrder
 						  );
 		gradb.assignProduct(diffB, false, onevec, false);
-	    }	
+	    }
 	
 	}}
 	#else

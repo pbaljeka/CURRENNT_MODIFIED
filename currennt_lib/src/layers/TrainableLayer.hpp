@@ -193,7 +193,8 @@ namespace layers {
 	/**
 	 * Read the weight from a layer of a trained network
 	 */
-	virtual void reReadWeight(const helpers::JsonValue &weightsSection, const int layerSize);
+	virtual void reReadWeight(const helpers::JsonValue &weightsSection, const int layerSize, 
+				  const int readCtrFlag);
 	
 
 	/**

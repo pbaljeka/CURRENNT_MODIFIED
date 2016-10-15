@@ -32,6 +32,48 @@
 #include <stdexcept>
 #include <fstream>
 
+#include "../helpers/getRawPointer.cuh"
+#include <thrust/transform_reduce.h>
+#include <thrust/functional.h>
+#include <thrust/sequence.h>
+#include <thrust/for_each.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/execution_policy.h>
+
+namespace internal {
+namespace {
+
+    struct ReadInput
+    {
+	const real_t *sourceW;
+	real_t *targetW;
+	real_t *weBank;
+	int sourceDim;     // 
+	int targetDim;     //
+	int weDim;         //
+	int weIdxDim;      // sourceDim - 1
+
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    int dim  = (idx % targetDim);
+	    int time = (idx / targetDim);
+	    
+	    int sourcePos;
+	    if (dim >= weIdxDim){
+		sourcePos = time * sourceDim + weIdxDim;
+		int whicWe = (int)(*(sourceW + sourcePos));
+		sourcePos = whicWe * weDim + (dim - sourceDim + 1);
+		*(targetW + idx) = *(weBank  + sourcePos);
+	    }else{
+		sourcePos = time * sourceDim + dim;
+		*(targetW + idx) = *(sourceW + sourcePos);
+	    }
+	}
+    };
+}
+}
+
+
 namespace layers {
 
     template <typename TDevice>
@@ -40,6 +82,7 @@ namespace layers {
 	, m_weDim(-1)
 	, m_flagWeUpdate(false)
     {
+	m_weBufferInput.resize(parallelSequences*maxSeqLength*this->size(), 0.0);
     }
 
     template <typename TDevice>
@@ -87,11 +130,33 @@ namespace layers {
 		throw std::runtime_error("m_weIdx size is smaller than fracTime\n");
 	    }
 	    thrust::fill(m_weIdx.begin(), m_weIdx.end(), -1);
-
 	    
+	    /* Code based on Thrust parallel */
+	    /*{{
+		internal::ReadInput fn;
+		fn.sourceW   = helpers::getRawPointer(fraction.inputs());
+		fn.targetW   = helpers::getRawPointer(m_weBufferInput);
+		fn.weBank    = helpers::getRawPointer(m_weBank);
+		fn.sourceDim = fraction.inputs().size()/fracTime;
+		fn.targetDim = this->size();
+		fn.weDim     = m_weDim;
+		fn.weIdxDim  = m_weIDDim;
+		
+		int n = fracTime * this->size();
+		thrust::for_each(thrust::host, 
+				 thrust::counting_iterator<int> (0),
+				 thrust::counting_iterator<int> (0)+n,
+				 fn);
+		
+		thrust::copy(m_weBufferInput.begin(),
+			     m_weBufferInput.begin()+n,
+			     this->_outputs().begin());
+	    }}*/
+	    
+
+	    //Code based on CPU sequential method
 	    Cpu::real_vector tempInput;
 	    tempInput.resize(this->size(), 0.0);
-
 	    for (int i=0; i<fracTime; i++){
 		bias = i*fraction.inputPatternSize();
 		
@@ -140,11 +205,13 @@ namespace layers {
 			     this->_outputs().begin()+i*this->size());
 		
 	    }
+	    
 	    // for debugging
 	    if (0){
 		Cpu::real_vector tempVec(this->_outputs());
 		std::cout << tempVec.size() << std::endl;
 	    }
+
 	}else
 	    // if no we is utilized, just copy the input
 	    thrust::copy(fraction.inputs().begin(),
@@ -230,6 +297,7 @@ namespace layers {
 	// to store the word vector sequences for each frame
 	m_weIdx    = Cpu::real_vector(maxLength, -1);
 	ifs.close();
+
 	return true;
     }
     

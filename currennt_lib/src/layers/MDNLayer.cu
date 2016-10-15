@@ -335,8 +335,11 @@ namespace layers {
 					lookBackStep, tmpTrainableFlag, dynDirection);
 			weightsNum += thisWeightNum;
 			this->m_trainable = true;
-			printf("%-8d, AR order and direction: %d %d\n", 
+			printf("%-8d, AR order and direction: %d %d", 
 			       thisWeightNum, lookBackStep, dynDirection);
+			if (config.tanhAutoregressive())
+			    printf(", with tanh-based model");
+			printf("\n");
 			break;
 		}
 		m_mdnParaDim += (unitE - unitS);
@@ -440,14 +443,20 @@ namespace layers {
 		// The problem is that, for high order filter, we need to break the symmetry of
 		// of the parameter
 		weights.resize(weightsNum, 0.0);	
-		static boost::mt19937 *gen = NULL;
-		if (!gen) {
-		    gen = new boost::mt19937;
-		    gen->seed(config.randomSeed()+101);
+		if(config.arRMDNInitVar() > 0.0){
+		    static boost::mt19937 *gen = NULL;
+		    if (!gen) {
+			gen = new boost::mt19937;
+			gen->seed(config.randomSeed()+101);
+		    }
+		    boost::random::normal_distribution<real_t> dist(0.0, config.arRMDNInitVar());
+		    for (size_t i = 0; i < weights.size(); ++i)
+			weights[i] = dist(*gen);
+		    printf("\nARRMDN para initialized as Gaussian noise (var: %f)", 
+			   config.arRMDNInitVar());
+		}else{
+		    printf("\nARRMDN initialized as zero");
 		}
-		boost::random::normal_distribution<real_t> dist(0.0, MIXTUREDYN_INITVARIANCE);
-                for (size_t i = 0; i < weights.size(); ++i)
-                    weights[i] = dist(*gen);
 	    }
 	    printf("\nMDN trainable mixture is used. The number of parameter is %d\n", weightsNum);
 	    m_sharedWeights       = weights;
@@ -593,7 +602,8 @@ namespace layers {
     }
 
     template <typename TDevice>
-    void MDNLayer<TDevice>::reReadWeight(const helpers::JsonValue &weightsSection)
+    void MDNLayer<TDevice>::reReadWeight(const helpers::JsonValue &weightsSection, 
+					 const int readCtrFlag)
     {
 	Cpu::real_vector weights;
 	if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())){
@@ -738,6 +748,21 @@ namespace layers {
     bool MDNLayer<TDevice>::flagTrainable() const
     {
 	return m_trainable;
+    }
+    
+    template <typename TDevice>
+    void MDNLayer<TDevice>::setCurrTrainingEpoch(const int curTrainingEpoch)
+    {
+	Layer<TDevice>::setCurrTrainingEpoch(curTrainingEpoch);
+	BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
+	    mdnUnit->setCurrTrainingEpoch(curTrainingEpoch);
+	}
+    }
+    
+    template <typename TDevice>
+    int& MDNLayer<TDevice>::getCurrTrainingEpoch()
+    {
+	return Layer<TDevice>::getCurrTrainingEpoch();
     }
 
     template class MDNLayer<Cpu>;

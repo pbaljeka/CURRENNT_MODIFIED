@@ -43,6 +43,7 @@ namespace layers {
 	/* The vector to store the readWeBank */
 	Cpu::real_vector  m_weBank;
 	Cpu::real_vector  m_weIdx;
+	Cpu::real_vector  m_weBufferInput;
 	unsigned int      m_weDim;
 	unsigned int      m_weIDDim;
 	bool              m_flagWeUpdate;
@@ -53,7 +54,7 @@ namespace layers {
 	int               m_weNoiseStartDim;
 	int               m_weNoiseEndDim;
 	real_t            m_weNoiseDev;
-
+	
     public:
         /**
          * Constructs the Layer

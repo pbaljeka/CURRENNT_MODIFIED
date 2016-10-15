@@ -94,6 +94,8 @@ namespace layers{
 	                                   // 0: sigmoid, softmax, mixture
 	                                   // 1: mixture with dynamic link, tied
 	                                   // 2: mixture with dynamic link, predicted by the NN
+	
+	int        m_currTrainingEpoch;    // the current trainig epoch 
 
     public:
 	MDNUnit(int startDim,    int endDim,  int startDimOut,                int endDimOut, 
@@ -142,6 +144,10 @@ namespace layers{
 
 	// to validate the configuration this unit
 	virtual bool flagValid() =0;
+
+	// set the current training epoch number
+	void setCurrTrainingEpoch(const int currTrainingEpoch);
+	int &getCurrTrainingEpoch();
     };
 
 
@@ -307,7 +313,9 @@ namespace layers{
 	int          m_paral;               // number of utterances in parallel 
 	int          m_totalTime;           // m_curMaxLength * m_paral
 	int          m_backOrder;           // y[t] - y[t-1] - ... - [y-m_backOrder]
-	int          m_arrmdnLearning;      
+	int          m_arrmdnLearning;      // 
+	int          m_arrmdnUpInter;       // 
+	
 	// Add 0822
 	int          m_dynDirection;        // 0: along the time axis (default)
 	                                    // 1: along the dimension axis

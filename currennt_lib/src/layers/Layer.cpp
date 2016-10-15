@@ -212,6 +212,19 @@ namespace layers {
         // add the layer object to the layers array
         layersArray->PushBack(layerObject, allocator);
     }
+    
+    template <typename TDevice>
+    void Layer<TDevice>::setCurrTrainingEpoch(const int curTrainingEpoch)
+    {
+	m_currTrainingEpoch = curTrainingEpoch;
+    }
+    
+    template <typename TDevice>
+    int& Layer<TDevice>::getCurrTrainingEpoch()
+    {
+	return m_currTrainingEpoch;
+    }
+
 
     // explicit template instantiations
     template class Layer<Cpu>;

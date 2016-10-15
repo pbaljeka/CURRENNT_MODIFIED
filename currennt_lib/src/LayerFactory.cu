@@ -27,6 +27,7 @@
 #include "layers/SoftmaxLayer.hpp"
 #include "layers/LstmLayer.hpp"
 #include "layers/SsePostOutputLayer.hpp"
+#include "layers/KLPostOutputLayer.hpp"
 #include "layers/RmsePostOutputLayer.hpp"
 #include "layers/CePostOutputLayer.hpp"
 #include "layers/SseMaskPostOutputLayer.hpp"
@@ -43,6 +44,7 @@
 #include "layers/MDNLayer.hpp"
 #include "layers/CNNLayer.hpp"
 #include "layers/LstmLayerCharW.hpp"
+#include "layers/RnnLayer.hpp"
 
 #include <stdexcept>
 
@@ -76,6 +78,12 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createLayer(
     	return new LstmLayer<TDevice>(layerChild, weightsSection, *precedingLayer, false);
     else if (layerType == "blstm")
     	return new LstmLayer<TDevice>(layerChild, weightsSection, *precedingLayer, true);
+    else if (layerType == "rnn")
+    	return new RnnLayer<TDevice>(layerChild, weightsSection, *precedingLayer, false);
+    else if (layerType == "brnn")
+    	return new RnnLayer<TDevice>(layerChild, weightsSection, *precedingLayer, true);
+    
+    // not implemented yet
     else if (layerType == "lstmw")
     	return new LstmLayerCharW<TDevice>(layerChild, weightsSection, *precedingLayer, 
 					   chaDim, maxTxtLength, false);
@@ -84,10 +92,13 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createLayer(
 					   chaDim, maxTxtLength, true);
     else if (layerType == "cnn")
 	return new CNNLayer<TDevice>(layerChild, weightsSection, *precedingLayer);
+    
+    // 
     else if (layerType == "sse"                       || layerType == "weightedsse"  || 
 	     layerType == "rmse"                      || layerType == "ce"  || 
 	     layerType == "wf"                        || layerType == "binary_classification" ||
-	     layerType == "multiclass_classification" || layerType == "mdn" ) {
+	     layerType == "multiclass_classification" || layerType == "mdn" || 
+	     layerType == "kld" ) {
         //layers::TrainableLayer<TDevice>* precedingTrainableLayer = 
 	// dynamic_cast<layers::TrainableLayer<TDevice>*>(precedingLayer);
         //if (!precedingTrainableLayer)
@@ -95,7 +106,9 @@ layers::Layer<TDevice>* LayerFactory<TDevice>::createLayer(
 
         if (layerType == "sse")
     	    return new SsePostOutputLayer<TDevice>(layerChild, *precedingLayer);
-        else if (layerType == "weightedsse")
+        else if (layerType == "kld")
+    	    return new KLPostOutputLayer<TDevice>(layerChild, *precedingLayer);
+	else if (layerType == "weightedsse")
     	    return new WeightedSsePostOutputLayer<TDevice>(layerChild, *precedingLayer);
         else if (layerType == "rmse")
             return new RmsePostOutputLayer<TDevice>(layerChild, *precedingLayer);

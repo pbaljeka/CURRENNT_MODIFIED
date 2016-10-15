@@ -193,12 +193,18 @@ public:
 
     /* Add 0514 Wang: initialize the output layer for MDN */
     void initOutputForMDN(const data_sets::DataSetMV &datamv);
+
+    /* Add 1012 Read the mean and variance to the output layer*/
+    void readMVForOutput(const data_sets::DataSetMV &datamv);
     
     /* Add 0531 Wang: get the mdn config*/
     Cpu::real_vector getMdnConfigVec();
 
     /* Add 0630 Wang: print the binary weight matrix */
     void printWeightMatrix(const std::string weightPath);
+    
+    /* Add 0928 Wang: notify the current training epoch to each layer*/
+    void notifyCurrentEpoch(const int trainingEpoch);
     
 };
 

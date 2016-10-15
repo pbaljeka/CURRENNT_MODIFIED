@@ -179,6 +179,10 @@ Configuration::Configuration(int argc, const char *argv[])
 	("tanhAutoReg",       po::value(&m_tanhAutoregressive) ->default_value(1), "Whether utilizes the tanh to transform the weight for autogressive model (default yes)")
 	("ReserverZeroFilter", po::value(&m_setDynFilterZero) ->default_value(0), "Reserved option for MDN Mixture Dyn units. Don't use it if you don't know it.")
 	("arrmdnLearning",     po::value(&m_arrmdnLearning)   ->default_value(0), "An option to set the learning rate for ARRMDN. Don't use it if you don't know the code")
+	("arrmdnInitVar",      po::value(&m_ARRMDNInitVar)    ->default_value(0.01), "The variance of Gaussian distribution for initialization the AR parameter")
+	("arrmdnUpdateInterval", po::value(&m_ARRMDNUpdateInterval)->default_value(-1), "Option for the classical form AR model learning. N+1 order AR can be estimated after estimating N order AR for this number of training epochs. (default not use) ")
+	("clockRNNTimeResolution", po::value(&m_clockRNNTimeRes) ->default_value(""), "Options for ClockRNN, StartDim1_TimeResolution1_StartDim2_TimeResolution2...")
+	
         ;
 
     po::options_description autosaveOptions("Autosave options");
@@ -209,13 +213,15 @@ Configuration::Configuration(int argc, const char *argv[])
 	("weDim",             po::value(&m_weDim)      ->default_value(0),        "the dimension of the word embedding vectors (0)")
 	("weBank",            po::value(&m_weBank)     ->default_value(""),       "the path to the word vectors")
 	("trainedModel",      po::value(&m_trainedParameter)    ->default_value(""), "the path to the trained model paratemeter")
-	("trainedModelCtr",   po::value(&m_trainedParameterCtr) ->default_value(""), "the trainedModel controller. A string of 0/1 whose length is #layer of NN. (default: void, read in all parameters)")
+	("trainedModelCtr",   po::value(&m_trainedParameterCtr) ->default_value(""), "the trainedModel controller. A string of 0/1/2/3 whose length is #layer of NN. \n 0: not read this layer\n 1: read this layer if number of weights matches\n 2: assume column number is the same\n 3: assume row numbe is the same \n (default: void, read in all parameters in option 1)")
 	("datamv",            po::value(&m_datamvPath)          ->default_value(""), "the path to the data mv file. This file can be read in and initialize MDN parameter (now not in use)")
 	("txtChaDim",         po::value(&m_chaDimLstmCharW)     ->default_value(0), "the dimension of the bag of character for LstmCharW")
 	("txtBank",           po::value(&m_chaBankPath)         ->default_value(""),       "the path to the character vectors for LstmCharW")
 	("weNoiseStartDim",   po::value(&m_weNoiseStartDim)     ->default_value(-2), "the first dimension that will be added with noise in the input layer (for Word embedding). Python-style index")
 	("weNoiseEndDim", po::value(&m_weNoiseEndDim)           ->default_value(-1), "the next of the last dimension that will be addded with noise in the input layer (for Word embedding). Python-style index")
 	("weNoiseDev",    po::value(&m_weNoiseDev)              ->default_value(0.1), "the standard deviation of the noise that will be added to the word vectors (default 0.1)")
+	("targetDataType", po::value(&m_KLDOutputDataType)      ->default_value(1),   "the type of the target data.\n\t1: linear domain, zero-mean, uni-var\n2: log domain, zero-mean, uni-var\n")
+	("KLDLRfactor",    po::value(&m_lrFactor)               ->default_value(1),   "the factor to scale the training criterion and gradient for KLD. default 1.0")
         ;
 
     po::options_description weightsInitializationOptions("Weight initialization options");
@@ -846,3 +852,27 @@ const real_t& Configuration::weNoiseDev() const
     return m_weNoiseDev;
 }
 
+const real_t& Configuration::arRMDNInitVar() const
+{
+    return m_ARRMDNInitVar;
+}
+
+const int& Configuration::arRMDNUpdateInterval() const
+{
+    return m_ARRMDNUpdateInterval;
+}
+
+const std::string& Configuration::clockRNNTimeRes() const
+{
+    return m_clockRNNTimeRes;
+}
+
+const int& Configuration::KLDOutputDataType() const
+{
+    return m_KLDOutputDataType;
+}
+
+const real_t& Configuration::lrFactor() const
+{
+    return m_lrFactor;
+}
