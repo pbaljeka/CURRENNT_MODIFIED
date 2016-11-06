@@ -365,19 +365,26 @@ namespace data_sets {
         }
 
         // allocate memory for the fraction
-        frac->m_inputs.resize  (frac->m_maxSeqLength*m_parallelSequences*frac->m_inputPatternSize,0);
+        frac->m_inputs.resize(frac->m_maxSeqLength*m_parallelSequences*frac->m_inputPatternSize,0);
         frac->m_patTypes.resize(frac->m_maxSeqLength*m_parallelSequences,PATTYPE_NONE);
+
+	frac->m_fracTotalLength = 0;
 	
 	// Add 0620 Wang
 	if (m_hasTxtData)
-	   frac->m_txtData.resize(frac->m_maxTxtLength*m_parallelSequences*frac->m_txtPatternSize,0);
+	    frac->m_txtData.resize((frac->m_maxTxtLength*
+				    m_parallelSequences*
+				    frac->m_txtPatternSize),
+				   0);
 	else
 	   frac->m_txtData.clear();
 
         if (m_isClassificationData)
             frac->m_targetClasses.resize(frac->m_maxSeqLength * m_parallelSequences, -1);
         else
-            frac->m_outputs.resize(frac->m_maxSeqLength * m_parallelSequences * m_outputPatternSize);
+            frac->m_outputs.resize((frac->m_maxSeqLength * 
+				    m_parallelSequences * 
+				    m_outputPatternSize));
 
         // load sequences from the cache file and create the fraction vectors
         for (int i = 0; i < m_parallelSequences; ++i) {
@@ -466,6 +473,7 @@ namespace data_sets {
                     patType = PATTYPE_NORMAL;
 
                 frac->m_patTypes[timestep * m_parallelSequences + i] = patType;
+		frac->m_fracTotalLength = frac->m_fracTotalLength+1;
             }
         }
         /*std::cout << "inputs for data fraction: ";

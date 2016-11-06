@@ -38,6 +38,10 @@
 #define MDNUNIT_TYPE_1_DIRECD 1 // Type 1 dyn, dimension axis
 #define MDNUNIT_TYPE_1_DIRECB 2 // Type 1 dyn, both axes
 
+#define MDNARRMDN_CLASSICALFORM   0
+#define MDNARRMDN_CASECADEREAL    1
+#define MDNARRMDN_CASECADECOMPLEX 2
+
 namespace layers{
     
     // utilizes by MDNUnits
@@ -138,6 +142,9 @@ namespace layers{
 	
 	// whether this unit ties the variance ?
 	virtual bool flagVariance() const;
+	
+	// type of tanh Reg
+	virtual int tanhRegType() const;
 	
 	// link the wegith for trainable
 	virtual void linkWeight(real_vector& weights, real_vector& weightsUpdate);
@@ -274,7 +281,7 @@ namespace layers{
 	virtual void initPreOutput(const cpu_real_vector &mVec, const cpu_real_vector &vVec);
 	
 	virtual bool flagVariance() const;
-	
+		
 	virtual bool flagValid();
     };    
 
@@ -306,6 +313,9 @@ namespace layers{
 	                                    //  for BP
 	real_vector  m_wTransBuff;          // the buffer to store tanh(w) and tanh(w)*tanh(w)
 	int          m_tanhReg;             // whether use tanh to transform the weight as tanh(w)
+	                                    // 0: the classical form
+	                                    // 1: the casecade of real poles
+	                                    // 2: the casecade of complex poles
 
 
 	real_vector  m_oneVec;              // temporary, a vector of 1.0, used in BP
@@ -313,8 +323,12 @@ namespace layers{
 	int          m_paral;               // number of utterances in parallel 
 	int          m_totalTime;           // m_curMaxLength * m_paral
 	int          m_backOrder;           // y[t] - y[t-1] - ... - [y-m_backOrder]
-	int          m_arrmdnLearning;      // 
-	int          m_arrmdnUpInter;       // 
+	int          m_casOrder;            // the number of filter for casecade form
+	bool         m_casRealPole;         // if AR complex poles, whethether there is real pole
+
+	int          m_arrmdnLearning;      // learning strategy, related to learning rate of
+	                                    // of the AR parameter
+	int          m_arrmdnUpInter;       // after how many epochs update the next AR order
 	
 	// Add 0822
 	int          m_dynDirection;        // 0: along the time axis (default)
@@ -324,15 +338,20 @@ namespace layers{
 	int          m_biasPartLength;      // the length of the bias part
 	int          m_weightShiftToDim;    // shift to the pointer of AR for dimension
 	int          m_wTransBuffShiftToDim;// shift in wTransBuff
+	int          m_wTransBuffParaBK;    // shift to the memory to store the original weights
 
 	
     public:
-	MDNUnit_mixture_dyn(int startDim, int endDim, int startDimOut, int endDimOut, 
-			    int type, Layer<TDevice> &precedingLayer, int outputSize,
-			    const bool tieVar, int weightStart, int weightNum,
+	MDNUnit_mixture_dyn(int startDim,    int endDim, 
+			    int startDimOut, int endDimOut, 
+			    int type,        Layer<TDevice> &precedingLayer, 
+			    int outputSize,  const bool tieVar, 
+			    int weightStart, int weightNum,
 			    int backOrder,
 			    const int trainable    = MDNUNIT_TYPE_1,
-			    const int dynDirection = MDNUNIT_TYPE_1_DIRECT);
+			    const int dynDirection = MDNUNIT_TYPE_1_DIRECT,
+			    const bool realPole    = false,
+			    const int tanhRegOpt   = 0);
 
 	virtual ~MDNUnit_mixture_dyn();
 		
@@ -352,6 +371,8 @@ namespace layers{
 	virtual void linkWeight(real_vector& weights, real_vector& weightsUpdate);     
 
 	virtual bool flagValid();
+	
+	virtual int  tanhRegType() const;
     };    
 
 

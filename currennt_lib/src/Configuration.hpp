@@ -125,7 +125,7 @@ private:
     std::string m_mdnVarScaleGen;       // the vector to scale each dimension of the output
     std::string m_mdnDyn;               // whether incorporate dynamic feature
     int         m_arrmdnLearning;       // an option for the learning rate of arrmdn
-    int         m_tanhAutoregressive;   // whether use the tanh-based function
+    std::string m_tanhAutoregressive;   // whether use the tanh-based function
     int         m_setDynFilterZero;     // 
     real_t      m_ARRMDNInitVar;        // the variance of Gaussian dis for initializing AR
     int         m_ARRMDNUpdateInterval; // after how many epochs update the n+1 order AR ? 
@@ -136,6 +136,10 @@ private:
     /* Add 1012 KLD output*/
     int         m_KLDOutputDataType;    // 
     real_t      m_lrFactor;             // learning rate factor
+    
+    /* Add 1022 for Adagrad */
+    unsigned    m_optimizerOption;      // 
+    real_t      m_secondLearningRate;   // in case the optimizer requires another learning rate
 
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
@@ -588,7 +592,7 @@ public:
 
     const std::string& mdnDyn() const;
 
-    const int& tanhAutoregressive() const;
+    const std::string& tanhAutoregressive() const;
 
     const int& zeroFilter() const;
     
@@ -603,6 +607,10 @@ public:
     const int& KLDOutputDataType() const;
 
     const real_t& lrFactor() const;
+
+    const unsigned& optimizerOption() const;
+    
+    const real_t& optimizerSecondLR() const;
 };
 
 

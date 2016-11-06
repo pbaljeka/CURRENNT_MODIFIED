@@ -31,7 +31,7 @@
 #include <limits>
 
 #include <thrust/transform.h>
-
+#include <thrust/fill.h>
 
 namespace optimizers {
 
@@ -46,27 +46,36 @@ namespace optimizers {
 	
 	// Add 0413 Wang : for weight Mask
 	m_neuralNetwork.maskWeight();
+	
 	// Add 0928 Wang : notify the current training epoch number
 	m_neuralNetwork.notifyCurrentEpoch(m_curEpoch);
 
+	// variances
         boost::shared_ptr<data_sets::DataSetFraction> frac;
-        bool firstFraction = true;
-	int uttNum = ds.totalSequences();
-	int uttCnt = 0;
+        bool firstFraction = true;                           // first fraction
+	int  uttNum        = ds.totalSequences();            // total number of sequences
+	int  uttCnt        = 0;                              // utterance counter
+	int  frameNum      = -1;                             // number of frames in mini-batch
+	
         while ((frac = ds.getNextFraction())) {
+	    
+	    // get the number of frames for SGD
+	    if (Configuration::instance().hybridOnlineBatch()) 
+		frameNum   = frac->fracTimeLength();
+	    
             // compute forward pass and calculate the error
             m_neuralNetwork.loadSequences(*frac);
             m_neuralNetwork.computeForwardPass();
             error += (m_neuralNetwork.calculateError()/ds.totalSequences());
 	    
-	    // add 0511 Wang : check for Nan
+	    // check for NaN
 	    if (error != error){
-		// only Nan will => error != error
 		printf("NaN detected. Tune the learning rate please.\n");
 		this->m_blowed = true;
 		break;
 	    }
 	    
+	    // calculate the classification error if any of the layers used
             if (dynamic_cast<layers::BinaryClassificationLayer<TDevice>*>(
 			&m_neuralNetwork.postOutputLayer()))
                 *classError -= (real_t)static_cast<layers::BinaryClassificationLayer<TDevice>&>(
@@ -76,8 +85,10 @@ namespace optimizers {
                 *classError -= (real_t)static_cast<layers::MulticlassClassificationLayer<TDevice>&>(
 			m_neuralNetwork.postOutputLayer()).countCorrectClassifications();
             
+	    // backward computation and parameter updateing
             if (calcWeightUpdates) {
-                // weight noise:
+		
+                // weight noise
                 std::vector<Cpu::real_vector> origWeights(m_neuralNetwork.layers().size());
                 if (Configuration::instance().weightNoiseSigma() > 0) {
                     for (size_t i = 1; i < m_neuralNetwork.layers().size()-1; ++i) {
@@ -88,13 +99,15 @@ namespace optimizers {
                             origWeights[i] = layer->weights();
                             layer->injectWeightNoise(Configuration::instance().weightNoiseSigma());
                         }
-			// ??? need weight noise for the PostTrainable Layer
                     }
                 }
+		
                 // compute the backward pass and accumulate the weight updates
                 m_neuralNetwork.computeBackwardPass();
 
+		// accumulate the statistics for parameter updating
                 for (size_t i = 1; i < m_neuralNetwork.layers().size(); ++i) {
+		    
                     layers::TrainableLayer<TDevice> *layer = 
 			dynamic_cast<layers::TrainableLayer<TDevice>*>(
 				m_neuralNetwork.layers()[i].get());
@@ -103,7 +116,6 @@ namespace optimizers {
 				m_neuralNetwork.layers()[i].get());
 		    
 		    // Modify 0703: PostLayer can be trainable too
-                    //if (!layer){
 		    if (!layer && !(mdnlayer && mdnlayer->flagTrainable())){
 			continue;
 		    }
@@ -121,12 +133,15 @@ namespace optimizers {
 			    thrust::copy(layer->weightUpdates().begin(), 
 					 layer->weightUpdates().end(), 
 					 m_curWeightUpdates[i].begin());
-
+						
 			// restore old weights before update in case of weight noise
 			if (Configuration::instance().weightNoiseSigma() > 0.0)
-			    thrust::copy(origWeights[i].begin(), origWeights[i].end(), 
+			    thrust::copy(origWeights[i].begin(), 
+					 origWeights[i].end(), 
 					 layer->weights().begin());
+			
 		    }else if(mdnlayer && mdnlayer->flagTrainable()){
+			
 			// if batch mode (not stochastic) and not the first fraction, 
 			// accumulating the updates
 			if (!firstFraction && !Configuration::instance().hybridOnlineBatch())
@@ -139,6 +154,7 @@ namespace optimizers {
 			    thrust::copy(mdnlayer->weightUpdates().begin(), 
 					 mdnlayer->weightUpdates().end(), 
 					 m_curWeightUpdates[i].begin());
+
 			// ???
 			// restore old weights before update in case of weight noise
 			// if (Configuration::instance().weightNoiseSigma() > 0.0)
@@ -150,12 +166,12 @@ namespace optimizers {
 
                 // update weights for hybrid online/batch learning
                 if (Configuration::instance().hybridOnlineBatch())
-                    _updateWeights();
+                    _updateWeights(frameNum);
 		
 		/* Add 16-02-22 Wang: for WE updating */
 		if (Configuration::instance().hybridOnlineBatch() && 
 		    m_neuralNetwork.inputLayer().inputWeUpdate()){
-		    _updateWeInput();
+		    _updateWeInput(frameNum);
 		}
             }
 
@@ -166,10 +182,9 @@ namespace optimizers {
 
         // update weights for batch learning
         if (calcWeightUpdates && !Configuration::instance().hybridOnlineBatch())
-            _updateWeights();
+            _updateWeights(1);
 
         // normalize the errors
-
 	// strange, why totalSequences? when parallel sequences are calculated, there may be bias
         //error /= ds.totalSequences();
 	//error /= ds.totalTimesteps();
@@ -180,7 +195,9 @@ namespace optimizers {
     }
 
     template <typename TDevice>
-    void Optimizer<TDevice>::_exportWeights(const helpers::JsonDocument &jsonDoc, const char *arrayName, const std::vector<real_vector> &weights)
+    void Optimizer<TDevice>::_exportWeights(const helpers::JsonDocument &jsonDoc, 
+					    const char *arrayName, 
+					    const std::vector<real_vector> &weights)
     {
         rapidjson::Value weightsArray(rapidjson::kArrayType);
         weightsArray.Reserve((rapidjson::SizeType)weights.size(), jsonDoc->GetAllocator());
@@ -198,20 +215,27 @@ namespace optimizers {
     }
 
     template <typename TDevice>
-    void Optimizer<TDevice>::_importWeights(const helpers::JsonDocument &jsonDoc, const char *arrayName, std::vector<real_vector> *weights)
+    void Optimizer<TDevice>::_importWeights(const helpers::JsonDocument &jsonDoc, 
+					    const char *arrayName, 
+					    std::vector<real_vector> *weights)
     {
         if (!jsonDoc->HasMember(arrayName) || !(*jsonDoc)[arrayName].IsArray())
-            throw std::runtime_error(std::string("Array '") + arrayName + "' is missing or has the wrong type");
+            throw std::runtime_error(std::string("Array '") + 
+				     arrayName + "' is missing or has the wrong type");
 
         if ((*jsonDoc)[arrayName].Size() != (rapidjson::SizeType)weights->size())
-            throw std::runtime_error(std::string("Array '") + arrayName + "' has a wrong size");
+            throw std::runtime_error(std::string("Array '") + 
+				     arrayName + "' has a wrong size");
 
         int i = 0;
-        for (rapidjson::Value::ConstValueIterator it = (*jsonDoc)[arrayName].Begin(); it != (*jsonDoc)[arrayName].End(); ++it) {
+        for (rapidjson::Value::ConstValueIterator it = (*jsonDoc)[arrayName].Begin(); 
+	     it != (*jsonDoc)[arrayName].End(); ++it) {
             if (!it->IsArray())
-                throw std::runtime_error(std::string("Object in '") + arrayName + "' is not an array");
+                throw std::runtime_error(std::string("Object in '") + 
+					 arrayName + "' is not an array");
             if (it->Size() != (rapidjson::SizeType)(*weights)[i].size())
-                throw std::runtime_error(std::string("Subarray in '") + arrayName + "' has a wrong size");
+                throw std::runtime_error(std::string("Subarray in '") + 
+					 arrayName + "' has a wrong size");
 
             Cpu::real_vector w;
             w.reserve(it->Size());
@@ -273,15 +297,23 @@ namespace optimizers {
     }
 
     template <typename TDevice>
-    const std::vector<typename Optimizer<TDevice>::real_vector>& Optimizer<TDevice>::_curWeightUpdates() const
+    std::vector<typename Optimizer<TDevice>::real_vector>& Optimizer<TDevice>::_curWeightUpdates()
     {
         return m_curWeightUpdates;
     }
+    
+    template <typename TDevice>
+    std::vector<typename Optimizer<TDevice>::real_vector>& Optimizer<TDevice>::_weightStats()
+    {
+        return m_weightStats;
+    }
 
     template <typename TDevice>
-    Optimizer<TDevice>::Optimizer(NeuralNetwork<TDevice> &neuralNetwork, data_sets::DataSet &trainingSet, 
-                                   data_sets::DataSet &validationSet, data_sets::DataSet &testSet,
-				  int maxEpochs, int maxEpochsNoBest, int validateEvery, int testEvery, int decayEpochNM)
+    Optimizer<TDevice>::Optimizer(
+	NeuralNetwork<TDevice> &neuralNetwork, data_sets::DataSet &trainingSet, 
+	data_sets::DataSet &validationSet, data_sets::DataSet &testSet,
+	int maxEpochs, int maxEpochsNoBest, int validateEvery, int testEvery, int decayEpochNM,
+	unsigned optOption)
         : m_neuralNetwork             (neuralNetwork)
         , m_trainingSet               (trainingSet)
         , m_validationSet             (validationSet)
@@ -304,6 +336,7 @@ namespace optimizers {
 	, m_flag_decay                (false)
 	, m_waitAfterDecay            (0)
 	, m_blowed                    (false)
+	, m_optOption                 (optOption)
     {
         // initialize the best weights vectors
         m_bestWeights.resize(m_neuralNetwork.layers().size());
@@ -321,10 +354,37 @@ namespace optimizers {
         // initialize the current weight updates vectors
         m_curWeightUpdates = m_bestWeights;
 	
+	// statistics buffer for learning
+	if (m_optOption>0){
+	    if (m_optOption == OPTIMIZATION_ADAGRAD || 
+		m_optOption == OPTIMIZATION_STOCHASTIC_ADAGRAD){
+		
+		// initialize the buffer for AdaGrad
+		m_weightStats = m_bestWeights;
+		for (size_t i = 1; i < m_neuralNetwork.layers().size(); ++i) {
+		    thrust::fill(m_weightStats[i].begin(), m_weightStats[i].end(), ADAGRADFACTOR);
+		}
+		if (m_optOption == OPTIMIZATION_ADAGRAD){
+		    printf("\n Optimization Techinique: AdaGrad\n");
+		}else{
+		    printf("\n Optimization Techinique: SGD + AdaGrad (with LR %0.3f)\n", 
+			   Configuration::instance().optimizerSecondLR());
+		}
+		
+	    }else if(m_optOption == OPTIMIZATION_AVEGRAD){
+		m_weightStats.clear();
+		printf("\n Optimization: average gradient over each data fraction\n");
+	    }else{
+		m_weightStats.clear();
+	    }
+	}else{
+	    printf("\nOptimization: plain SGD \n");
+	}
+	
+	
 	// Add 0409 to check the decayEpochNM
 	if (m_decayEpochNM >= m_maxEpochsNoBest){
 	    printf("WARNING: decayEpochNM should be less than m_maxEpochsNoBest.");
-	    printf("Now learning_rate will be prohibited\n");
 	}
     }
 
@@ -421,27 +481,34 @@ namespace optimizers {
             m_curTrainingError = _processDataSet(m_trainingSet, true, &m_curTrainingClassError);
 	    
 	    // Add 0511
-	    if (this->m_blowed)
-		return m_finished;
-	    m_curTrainingErrorPerFrame = m_curTrainingError * m_trainingSet.totalSequences()
-		/ m_trainingSet.totalTimesteps();
-	    
+	    if (this->m_blowed) {return m_finished;}
 
+	    
+	    // Training error
+	    m_curTrainingErrorPerFrame = (m_curTrainingError * 
+					  m_trainingSet.totalSequences() /
+					  m_trainingSet.totalTimesteps());
+	    
+	    
             // calculate the validation error and store the weights if we a new lowest error
             if (!m_validationSet.empty() && m_curEpoch % m_validateEvery == 0) {
+		
                 m_curValidationError = _processDataSet(m_validationSet, false, 
 						       &m_curValidationClassError);
-                m_curValidationErrorPerFrame = m_curValidationError * 
-		    m_validationSet.totalSequences() / m_validationSet.totalTimesteps();
+                m_curValidationErrorPerFrame = (m_curValidationError * 
+						m_validationSet.totalSequences() / 
+						m_validationSet.totalTimesteps());
 
                 if (m_curValidationError < m_lowestValidationError) {
                     m_lowestValidationError  = m_curValidationError;
                     m_epochsSinceLowestError = 0;
                     _storeWeights();
                 }
+		
                 else {
                     m_epochsSinceLowestError += m_validateEvery;
                 }
+		
             }
             else if (m_validationSet.empty()) {
                 m_epochsSinceLowestError = 0;
@@ -451,11 +518,14 @@ namespace optimizers {
             // calculate the test error
             if (!m_testSet.empty() && m_curEpoch % m_testEvery == 0){
                 m_curTestError = _processDataSet(m_testSet, false, &m_curTestClassError);
-		m_curTestErrorPerFrame = m_curTestError * m_testSet.totalSequences()
-		    / m_testSet.totalTimesteps();
+		m_curTestErrorPerFrame = (m_curTestError * 
+					  m_testSet.totalSequences() /
+					  m_testSet.totalTimesteps());
 	    }
+	    
+	    
             // Add 0409 for decaying the learning rate
-	    if (m_decayEpochNM > 0 && 
+	    /*if (m_decayEpochNM > 0 && 
 		m_epochsSinceLowestError >= m_decayEpochNM && 
 		m_waitAfterDecay < 1){
 		m_flag_decay = true;
@@ -465,14 +535,39 @@ namespace optimizers {
 	    if (m_waitAfterDecay > 0){
 		m_waitAfterDecay--;
 	    }
+	    */
 	    
-	    // check if we did not get a new lowest error for some training epochs 
-            // or if we reached the maximum number of training epochs	    	    
-            if (m_epochsSinceLowestError >= m_maxEpochsNoBest || 
-		(m_maxEpochs >= 0 && m_curEpoch >= m_maxEpochs)) {
-                _restoreWeights();
-                m_finished = true;
-            }
+	    // Check status
+	    if (m_maxEpochs >= 0 && m_curEpoch >= m_maxEpochs){
+		// it must be finished
+		_restoreWeights();
+		m_finished  = true;
+		m_optStatus = "Finished";
+	    }else if (m_epochsSinceLowestError >= m_maxEpochsNoBest){
+		if (m_optOption == OPTIMIZATION_STOCHASTIC_ADAGRAD){
+		    // no best after N epochs, swtich to AdaGrad
+		    m_optOption = OPTIMIZATION_ADAGRAD;
+		    // let's start from 1, to avoid save the network
+		    m_epochsSinceLowestError = 1;
+		    m_lowestValidationError  = std::numeric_limits<real_t>::max();
+		    m_optStatus = "To ADAGRAD";
+		    this->changeLR(Configuration::instance().optimizerSecondLR());
+		    _restoreWeights();
+		}else{
+		    // no best after N epochs
+		    _restoreWeights();
+		    m_finished  = true;
+		    m_optStatus = "Finished";
+		}
+	    }else{
+		if (m_optOption == OPTIMIZATION_ADAGRAD){
+		    m_optStatus = "ADAGRAD";
+		}else if (m_optOption == OPTIMIZATION_AVEGRAD){
+		    m_optStatus = "AVEGRAD";
+		}else{
+		    m_optStatus = "SGD";
+		}
+	    }
         }
 	
         return m_finished;
@@ -481,35 +576,73 @@ namespace optimizers {
     template <typename TDevice>
     void Optimizer<TDevice>::exportState(const helpers::JsonDocument &jsonDoc) const
     {
-        jsonDoc->AddMember("optimizer_finished",                   m_finished,                jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_cur_epoch",                  m_curEpoch,                jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_epochs_since_lowest_error",  m_epochsSinceLowestError,  jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_lowest_validation_error",    m_lowestValidationError,   jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_cur_training_error",         m_curTrainingError,        jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_cur_validation_error",       m_curValidationError,      jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_cur_test_error",             m_curTestError,            jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_cur_training_class_error",   m_curTrainingClassError,   jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_cur_validation_class_error", m_curValidationClassError, jsonDoc->GetAllocator());
-        jsonDoc->AddMember("optimizer_cur_test_class_error",       m_curTestClassError,       jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_finished",                   
+			   m_finished,                jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_cur_epoch",                  
+			   m_curEpoch,                jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_epochs_since_lowest_error",  
+			   m_epochsSinceLowestError,  jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_lowest_validation_error",    
+			   m_lowestValidationError,   jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_cur_training_error",         
+			   m_curTrainingError,        jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_cur_validation_error",       
+			   m_curValidationError,      jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_cur_test_error",             
+			   m_curTestError,            jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_cur_training_class_error",   
+			   m_curTrainingClassError,   jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_cur_validation_class_error", 
+			   m_curValidationClassError, jsonDoc->GetAllocator());
+        jsonDoc->AddMember("optimizer_cur_test_class_error",       
+			   m_curTestClassError,       jsonDoc->GetAllocator());
+	
+	// Add 10-02: Add support to the status of the optimizer
+	jsonDoc->AddMember("optimizer_status",       
+			   m_optOption,               jsonDoc->GetAllocator());
 
         _exportWeights(jsonDoc, "optimizer_best_weights", m_bestWeights);
+	
+	if (m_optOption == OPTIMIZATION_ADAGRAD || 
+	    m_optOption == OPTIMIZATION_STOCHASTIC_ADAGRAD){
+	    _exportWeights(jsonDoc, "optimizer_status_vector",   m_weightStats);
+	}
     }
 
     template <typename TDevice>
     void Optimizer<TDevice>::importState(const helpers::JsonDocument &jsonDoc)
     {
-        m_finished                = helpers::checkedJsonGet<bool  >(*jsonDoc, "optimizer_finished");
-        m_curEpoch                = helpers::checkedJsonGet<int   >(*jsonDoc, "optimizer_cur_epoch");
-        m_epochsSinceLowestError  = helpers::checkedJsonGet<int   >(*jsonDoc, "optimizer_epochs_since_lowest_error");
-        m_lowestValidationError   = helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_lowest_validation_error");
-        m_curTrainingError        = helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_training_error");
-        m_curValidationError      = helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_validation_error");
-        m_curTestError            = helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_test_error");
-        m_curTrainingClassError   = helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_training_class_error");
-        m_curValidationClassError = helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_validation_class_error");
-        m_curTestClassError       = helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_test_class_error");
-
+        m_finished                = 
+	    helpers::checkedJsonGet<bool  >(*jsonDoc, "optimizer_finished");
+        m_curEpoch                = 
+	    helpers::checkedJsonGet<int   >(*jsonDoc, "optimizer_cur_epoch");
+        m_epochsSinceLowestError  = 
+	    helpers::checkedJsonGet<int   >(*jsonDoc, "optimizer_epochs_since_lowest_error");
+        m_lowestValidationError   = 
+	    helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_lowest_validation_error");
+        m_curTrainingError        = 
+	    helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_training_error");
+        m_curValidationError      = 
+	    helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_validation_error");
+        m_curTestError            = 
+	    helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_test_error");
+        m_curTrainingClassError   = 
+	    helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_training_class_error");
+        m_curValidationClassError = 
+	    helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_validation_class_error");
+        m_curTestClassError       = 
+	    helpers::checkedJsonGet<real_t>(*jsonDoc, "optimizer_cur_test_class_error");
+	
+	// Add 10-02: status of the optimizer
+	m_optOption               =
+	    helpers::checkedJsonGet<int   >(*jsonDoc, "optimizer_status");
+	
         _importWeights(jsonDoc, "optimizer_best_weights", &m_bestWeights);
+	
+	if (m_optOption == OPTIMIZATION_ADAGRAD || 
+	    m_optOption == OPTIMIZATION_STOCHASTIC_ADAGRAD){
+	    _importWeights(jsonDoc, "optimizer_status_vector",   &m_weightStats);
+	}
     }
     
     template <typename TDevice>
@@ -527,12 +660,6 @@ namespace optimizers {
     }
 
     template <typename TDevice>
-    bool Optimizer<TDevice>::blowed()
-    {
-	return m_blowed;
-    }
-
-    template <typename TDevice>
     void Optimizer<TDevice>::_setLRdecayFalse()
     {
 	m_flag_decay = false;
@@ -541,6 +668,24 @@ namespace optimizers {
     bool Optimizer<TDevice>::checkLRdecay()
     {
 	return m_flag_decay;
+    }
+
+    template <typename TDevice>
+    bool Optimizer<TDevice>::blowed()
+    {
+	return m_blowed;
+    }
+    
+    template <typename TDevice>
+    const unsigned& Optimizer<TDevice>::_optOption() const
+    {
+	return m_optOption;
+    }
+    
+    template <typename TDevice>
+    const std::string& Optimizer<TDevice>::optStatus() const
+    {
+	return m_optStatus;
     }
     
     // reiniti optimizer
@@ -569,6 +714,23 @@ namespace optimizers {
                 m_bestWeights[i] = layer->weights();
 	    // ??? for MDNLayer
         }
+
+		// statistics buffer for learning
+	if (m_optOption>0){
+	    if (m_optOption == OPTIMIZATION_ADAGRAD || 
+		m_optOption == OPTIMIZATION_STOCHASTIC_ADAGRAD){
+		// initialize the buffer for AdaGrad
+		m_weightStats = m_bestWeights;
+		for (size_t i = 1; i < m_neuralNetwork.layers().size(); ++i) {
+		    thrust::fill(m_weightStats[i].begin(), m_weightStats[i].end(), ADAGRADFACTOR);
+		}		
+	    }else if(m_optOption == OPTIMIZATION_AVEGRAD){
+		m_weightStats.clear();
+	    }else{
+		m_weightStats.clear();
+	    }
+	}
+	
         // initialize the current weight updates vectors
         m_curWeightUpdates = m_bestWeights;
     }

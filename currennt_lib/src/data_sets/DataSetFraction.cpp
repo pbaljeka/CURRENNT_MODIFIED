@@ -94,5 +94,9 @@ namespace data_sets {
         return m_maxTxtLength;
     }
   
+    int DataSetFraction::fracTimeLength() const
+    {
+	return m_fracTotalLength;
+    }
 
 } // namespace data_sets

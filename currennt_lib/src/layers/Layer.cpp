@@ -53,9 +53,12 @@ namespace layers {
     
 
     template <typename TDevice>
-    Layer<TDevice>::Layer(const helpers::JsonValue &layerChild, int parallelSequences, int maxSeqLength, bool createOutputs)
-        : m_name             (layerChild->HasMember("name") ? (*layerChild)["name"].GetString()  : "")
-        , m_size             (layerChild->HasMember("size") ? (*layerChild)["size"].GetInt()     : 0)
+    Layer<TDevice>::Layer(const helpers::JsonValue &layerChild, int parallelSequences, 
+			  int maxSeqLength, bool createOutputs)
+        : m_name             (layerChild->HasMember("name") ? 
+			      (*layerChild)["name"].GetString()  : "")
+        , m_size             (layerChild->HasMember("size") ? 
+			      (*layerChild)["size"].GetInt()     : 0)
         , m_parallelSequences(parallelSequences)
         , m_maxSeqLength     (maxSeqLength)
         , m_curMaxSeqLength  (0)
@@ -85,9 +88,11 @@ namespace layers {
 
     // overload for CNN
     template <typename TDevice>
-    Layer<TDevice>::Layer(const helpers::JsonValue &layerChild, int parallelSequences, int maxSeqLength, 
-			  int outputSize, bool createOutputs)
-        : m_name             (layerChild->HasMember("name") ? (*layerChild)["name"].GetString()  : "")
+    Layer<TDevice>::Layer(const helpers::JsonValue &layerChild, 
+			  int parallelSequences, int maxSeqLength, 
+			  int outputSize,        bool createOutputs)
+        : m_name             (layerChild->HasMember("name") ? 
+			      (*layerChild)["name"].GetString()  : "")
         , m_size             (outputSize)
         , m_parallelSequences(parallelSequences)
         , m_maxSeqLength     (maxSeqLength)
@@ -198,7 +203,8 @@ namespace layers {
     }
     
     template <typename TDevice>
-    void Layer<TDevice>::exportLayer(const helpers::JsonValue &layersArray, const helpers::JsonAllocator &allocator) const
+    void Layer<TDevice>::exportLayer(const helpers::JsonValue &layersArray, 
+				     const helpers::JsonAllocator &allocator) const
     {
         if (!layersArray->IsArray())
             throw std::runtime_error("The JSON value is not an array");

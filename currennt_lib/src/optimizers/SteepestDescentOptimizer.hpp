@@ -41,21 +41,21 @@ namespace optimizers {
         typedef typename TDevice::real_vector real_vector;
 
     private:
-        const real_t m_learningRate;
-        real_t m_learningRateFirst;
+        real_t       m_learningRate;
+        real_t       m_learningRateAda;
         const real_t m_momentum;
         std::vector<real_vector> m_weightDeltas;
 
         /* Add 16-02-22 Wang: for WE updating */
 	const real_t m_weLearningRate;
-	real_t m_learningRateDecay;
+	real_t       m_learningRateDecay;
 	const real_t m_learningRateDecayRate; // to decay the learning rate
 
     protected:
-        virtual void _updateWeights();
+        virtual void _updateWeights(int fracLength);
 	
 	/* Add 16-02-22 Wang: for WE updating */
-	virtual void _updateWeInput();
+	virtual void _updateWeInput(int fracLength);
 
     public:
         /**
@@ -86,7 +86,8 @@ namespace optimizers {
             real_t momentum,
 	    real_t weLearningRate,
 	    real_t learningRateDecayRate,
-	    int decayEpochNM
+	    int decayEpochNM,
+	    unsigned optOption
             );
 
         /**
@@ -110,12 +111,10 @@ namespace optimizers {
 	// 0511 Wang: adjust the learning rate
 	virtual void adjustLR(int decayTime);
 	
+	virtual void changeLR(real_t newLR);
+
 	virtual void reinit();
 	
-        /**
-         * Sets the learning rate for the first layer.
-         */
-        void setLearningRateFirst(real_t learningRateFirst);
     };
 
 } // namespace optimizers

@@ -102,10 +102,10 @@ namespace layers {
     {
 	if (m_flagWeUpdate){
 	    if (m_weIDDim > fraction.inputPatternSize()){
-		throw std::runtime_error("we dimension is larger than input data dimension");
+		throw std::runtime_error("WE dimension is larger than input data dimension");
 	    }
 	    if (this->size() != fraction.inputPatternSize()-1+m_weDim){
-		throw std::runtime_error("input data pattern -1 + weDim != networkinput");
+		throw std::runtime_error("Input's dimension -1 + weDim != input layer size");
 	    }
 	}else if (fraction.inputPatternSize() != this->size()) {
             throw std::runtime_error(std::string("Input layer size of ") + 

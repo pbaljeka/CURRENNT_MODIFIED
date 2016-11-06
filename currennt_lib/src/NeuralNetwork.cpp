@@ -58,12 +58,13 @@ NeuralNetwork<TDevice>::NeuralNetwork(
 
             weightsSection = helpers::JsonValue(&(*jsonDoc)["weights"]);
         }
-
+	
+	int cnt=0;
         // extract the layers
         for (rapidjson::Value::ValueIterator layerChild = layersSection.Begin(); 
 	     layerChild != layersSection.End(); 
-	     ++layerChild) {
-            
+	     ++layerChild, cnt++) {
+            printf("\nLayer (%d)", cnt);
 	    // check the layer child type
             if (!layerChild->IsObject())
                 throw std::runtime_error("A layer section in the 'layers' array is not an object");

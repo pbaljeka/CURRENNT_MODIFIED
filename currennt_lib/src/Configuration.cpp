@@ -59,6 +59,8 @@ std::string serializeOptions(const po::variables_map &vm)
             s += it->first + '=' + boost::lexical_cast<std::string>(boost::any_cast<double>(it->second.value()));
         else if (it->second.value().type() == typeid(std::string))
             s += it->first + '=' + boost::any_cast<std::string>(it->second.value());
+        else if (it->second.value().type() == typeid(int))
+            s += it->first + '=' + boost::lexical_cast<std::string>(boost::any_cast<int>(it->second.value()));
 
         s += ";;;";
     }
@@ -176,12 +178,14 @@ Configuration::Configuration(int argc, const char *argv[])
 	("tieVariance",         po::value(&m_tiedVariance)  ->default_value(true,"true"), "Whether the variance should be tied across dimension for all mixture in MDN mixture unit? (default true) Note, this argument will be ignored if tieVarianceFlag is specified in the model (.autosave)")
 	("mdn_sampleParaVec",   po::value(&m_mdnVarScaleGen)->default_value(""), "The binary vector of coefficients to scale each dimension of the variance of the mixture model. Dimension of the vector should be equal to the dimension of the target feature vector.")
 	("mdnDyn",            po::value(&m_mdnDyn) ->default_value(""), "Type of MDN dynamic model. Please specify a string of digitals as num1_num2_num3..., where the number of num is equal to the number of MDN units in the output MDN layer. \n\t0: normal MDN;\n\t1: 1-order AR;\n\t2: context-dependent AR;\n\t3: 2-order AR (default 0)\n Note, this argument will be ignored if trainableFlag is specified in the model (.autosave). Also note, due to historical reason, 2 is reserved for context-dependent AR")
-	("tanhAutoReg",       po::value(&m_tanhAutoregressive) ->default_value(1), "Whether utilizes the tanh to transform the weight for autogressive model (default yes)")
+	("tanhAutoReg",       po::value(&m_tanhAutoregressive) ->default_value("1"), "What kind of strategy to learn AR model.\n\t0: plain\n\t1:tanh-based 1st order (real poles AR)\n\t2:tanh-based 2nd order filter (complex poles AR)")
 	("ReserverZeroFilter", po::value(&m_setDynFilterZero) ->default_value(0), "Reserved option for MDN Mixture Dyn units. Don't use it if you don't know it.")
 	("arrmdnLearning",     po::value(&m_arrmdnLearning)   ->default_value(0), "An option to set the learning rate for ARRMDN. Don't use it if you don't know the code")
 	("arrmdnInitVar",      po::value(&m_ARRMDNInitVar)    ->default_value(0.01), "The variance of Gaussian distribution for initialization the AR parameter")
 	("arrmdnUpdateInterval", po::value(&m_ARRMDNUpdateInterval)->default_value(-1), "Option for the classical form AR model learning. N+1 order AR can be estimated after estimating N order AR for this number of training epochs. (default not use) ")
 	("clockRNNTimeResolution", po::value(&m_clockRNNTimeRes) ->default_value(""), "Options for ClockRNN, StartDim1_TimeResolution1_StartDim2_TimeResolution2...")
+	("Optimizer",            po::value(&m_optimizerOption) ->default_value(0), "Optimization technique: \n\t0: normal gradient descent (default)\n\t1:AdaGrad (except the Trainable MDNLayer).")
+	("OptimizerSecondLR",    po::value(&m_secondLearningRate) ->default_value(0.01), "Optimizer==3, it requirs additional learning rate for AdaGrad (0.01 default)")
 	
         ;
 
@@ -220,7 +224,7 @@ Configuration::Configuration(int argc, const char *argv[])
 	("weNoiseStartDim",   po::value(&m_weNoiseStartDim)     ->default_value(-2), "the first dimension that will be added with noise in the input layer (for Word embedding). Python-style index")
 	("weNoiseEndDim", po::value(&m_weNoiseEndDim)           ->default_value(-1), "the next of the last dimension that will be addded with noise in the input layer (for Word embedding). Python-style index")
 	("weNoiseDev",    po::value(&m_weNoiseDev)              ->default_value(0.1), "the standard deviation of the noise that will be added to the word vectors (default 0.1)")
-	("targetDataType", po::value(&m_KLDOutputDataType)      ->default_value(1),   "the type of the target data.\n\t1: linear domain, zero-mean, uni-var\n2: log domain, zero-mean, uni-var\n")
+	("targetDataType", po::value(&m_KLDOutputDataType)      ->default_value(-1),   "the type of the target data.\n\t1: linear domain, zero-mean, uni-var\n2: log domain, zero-mean, uni-var\n")
 	("KLDLRfactor",    po::value(&m_lrFactor)               ->default_value(1),   "the factor to scale the training criterion and gradient for KLD. default 1.0")
         ;
 
@@ -360,80 +364,95 @@ Configuration::Configuration(int argc, const char *argv[])
     }
 
     // print information about active command line options
+    std::cout << "Configuration Infor:" << std::endl;
     if (m_trainingMode) {
-        std::cout << "Started in " << (m_hybridOnlineBatch ? "hybrid online/batch" : "batch") << " training mode." << std::endl;
+        std::cout << "\tTraining Mode: Started in ";
+	std::cout << (m_hybridOnlineBatch ? "hybrid online/batch" : "batch") << std::endl;
 
-        if (m_shuffleFractions)
-            std::cout << "Mini-batches (" << m_parallelSequences << " sequences each) will be shuffled during training." << std::endl;
-        if (m_shuffleSequences)
-            std::cout << "Sequences will be shuffled within and across mini-batches during training." << std::endl;
-        if (m_inputNoiseSigma != (real_t)0)
-            std::cout << "Using input noise with a standard deviation of " << m_inputNoiseSigma << "." << std::endl;
-
-        std::cout << "The trained network will be written to '" << m_trainedNetwork << "'." << std::endl;
+        if (m_shuffleFractions){
+            std::cout << "\t\tMini-batches (parallel " << m_parallelSequences << " sequences each)";
+	    std::cout << " will be shuffled during training." << std::endl;
+	}
+        if (m_shuffleSequences){
+            std::cout << "\t\tSequences shuffled within and across mini-batches.\n" << std::endl;
+	}
+        if (m_inputNoiseSigma != (real_t)0){
+            std::cout << "\t\tUsing input noise with std. of " << m_inputNoiseSigma << std::endl;
+	}
+        std::cout << "\t\tWritting network  to '" << m_trainedNetwork << "'." << std::endl;
         if (boost::filesystem::exists(m_trainedNetwork))
-            std::cout << "WARNING: The output file '" << m_trainedNetwork << "' already exists. It will be overwritten!" << std::endl;
+            std::cout << "\t\tWARNING: overwriting '" << m_trainedNetwork << "'" << std::endl;
+	
     }else if(m_printWeightPath.size()>0){
-	std::cout << "Started in printing mode." << std::endl;
+	std::cout << "\tStarted in printing mode. ";
 	std::cout << "Weight will be print to " << m_printWeightPath << std::endl;
+	
     }else {
-        std::cout << "Started in forward pass mode." << std::endl;
-
-        std::cout << "The forward pass output will be written to '" << m_feedForwardOutputFile << "'." << std::endl;
+        std::cout << "\tStarted in forward pass mode." << std::endl;
+        std::cout << "\tWritting output to '" << m_feedForwardOutputFile << "'." << std::endl;
         if (boost::filesystem::exists(m_feedForwardOutputFile))
-            std::cout << "WARNING: The output file '" << m_feedForwardOutputFile << "' already exists. It will be overwritten!" << std::endl;
+            std::cout << "\t\tWARNING: overwriting '" << m_feedForwardOutputFile << std::endl;
     }
 
     if (m_trainingMode && !m_validationFiles.empty())
-        std::cout << "Validation error will be calculated every " << m_validateEvery << " epochs." << std::endl;
+        std::cout << "\tValidation every " << m_validateEvery << " epochs." << std::endl;
     if (m_trainingMode && !m_testFiles.empty())
-        std::cout << "Test error will be calculated every " << m_testEvery << " epochs." << std::endl;
+        std::cout << "\tTest  every " << m_testEvery << " epochs." << std::endl;
 
     if (m_trainingMode) {
-        std::cout << "Training will be stopped";
+        std::cout << "\n\tTraining will be stopped";
         if (m_maxEpochs != std::numeric_limits<unsigned>::max())
             std::cout << " after " << m_maxEpochs << " epochs or";
-        std::cout << " if there is no new lowest validation error within " << m_maxEpochsNoBest << " epochs." << std::endl;
+        std::cout << " after no new lowest validation error for ";
+	std::cout << m_maxEpochsNoBest << " epochs." << std::endl;
     }
     
     if (m_autosave) {
-        std::cout << "Autosave after EVERY EPOCH enabled." << std::endl;
+        std::cout << "\tAutosave after EVERY EPOCH enabled." << std::endl;
     }
     if (m_autosaveBest) {
-        std::cout << "Autosave on BEST VALIDATION ERROR enabled." << std::endl;
+        std::cout << "\tAutosave on BEST VALIDATION ERROR enabled." << std::endl;
     }
 
-    if (m_useCuda)
-        std::cout << "Utilizing the GPU for computations with " << m_parallelSequences << " sequences in parallel." << std::endl;
-    else
-        std::cout << "WARNING: CUDA option not set. Computations will be performed on the CPU!" << std::endl;
+    if (m_useCuda){
+        std::cout << "\tUtilizing the GPU on ";
+	std::cout << m_parallelSequences << " sequences in parallel." << std::endl;
+    }else
+        std::cout << "\tWARNING: CUDA option not set. Computations on the CPU!" << std::endl;
 
     if (m_trainingMode) {
-        if (m_weightsDistribution == DISTRIBUTION_NORMAL)
-            std::cout << "Normal distribution with mean=" << m_weightsNormalMean << " and sigma=" << m_weightsNormalSigma;
-        else if (m_weightsDistribution == DISTRIBUTION_UNINORMALIZED)
-	    std::cout << "Uniform distribution with layer-wise range" << std::endl;
-	else
-            std::cout << "Uniform distribution with range [" << m_weightsUniformMin << ", " << m_weightsUniformMax << "]";
-        std::cout << ". Random seed: " << m_randomSeed << std::endl;
+	std::cout << "\n\tInitialization method:" << std::endl;
+        if (m_weightsDistribution == DISTRIBUTION_NORMAL){
+            std::cout << "\t\tNormal dist. with mean, std:"; 
+	    std::cout << m_weightsNormalMean << m_weightsNormalSigma;
+        }else if (m_weightsDistribution == DISTRIBUTION_UNINORMALIZED)
+	    std::cout << "\t\tUniform dist. with layer-wise range" << std::endl;
+	else{
+            std::cout << "\t\tUniform dist. with range [";
+	    std::cout << m_weightsUniformMin << ", " << m_weightsUniformMax << "]";
+	}
+	std::cout << "\n\t\tRandom seed: " << m_randomSeed << std::endl;
+	
     }
     
     /* Add 16-02-22 Wang: for WE updating */
     if (m_weUpdate){
 	// for checking:
 	if (m_inputNoiseSigma > 0.0){
-	    std::cout << "WARNING: the external vectors are utilized, noise on input will be turned off" << std::endl;
+	    std::cout << "\tWARNING: input vectors are used, input noise is turned off" << std::endl;
 	    m_inputNoiseSigma = 0.0;
 	}
 	if (m_weIDDim < 0 || m_weDim < 1 || m_weBank.size()<1){
-	    std::cout << "ERROR: Invalid configuration for WE updating" << std::endl;
+	    std::cout << "\tERROR: Invalid configuration for WE updating" << std::endl;
 	    exit(1);
 	}
     }
 
     if (m_mseWeightPath.size()>0){
-	std::cout << "Using MSE Weight: " << m_mseWeightPath  << std::endl;
+	std::cout << "\tUsing MSE Weight: " << m_mseWeightPath  << std::endl;
     }
+
+    
     
     std::cout << std::endl;
 }
@@ -822,7 +841,7 @@ const std::string& Configuration::mdnVarScaleGen() const
     return m_mdnVarScaleGen;
 }
 
-const int& Configuration::tanhAutoregressive() const
+const std::string& Configuration::tanhAutoregressive() const
 {
     return m_tanhAutoregressive;
 }
@@ -875,4 +894,16 @@ const int& Configuration::KLDOutputDataType() const
 const real_t& Configuration::lrFactor() const
 {
     return m_lrFactor;
+}
+
+
+const unsigned& Configuration::optimizerOption() const
+{
+    return m_optimizerOption;
+}
+
+
+const real_t& Configuration::optimizerSecondLR() const
+{
+    return m_secondLearningRate;
 }

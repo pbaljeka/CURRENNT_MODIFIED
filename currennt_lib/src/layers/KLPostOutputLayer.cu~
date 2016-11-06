@@ -34,6 +34,8 @@
 #include "../Configuration.hpp"
 #include "../helpers/getRawPointer.cuh"
 #include "../helpers/NumericLimits.cuh"
+#include "../helpers/min.cuh"
+#include "../helpers/max.cuh"
 
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
@@ -48,61 +50,9 @@
 namespace internal {
 namespace {
 
-    struct ComputeKLDFnWeighted
-    {
-        int layerSize;
-	const real_t *weights;
-        const char *patTypes;
-
-        __host__ __device__ real_t operator() (const thrust::tuple<real_t, real_t, int> &values) const
-        {
-            // unpack the tuple
-            real_t target = values.get<0>();
-            real_t output = values.get<1>();
-            int outputIdx = values.get<2>();
-
-            // check if we have to skip this value
-            int patIdx = outputIdx / layerSize;
-            if (patTypes[patIdx] == PATTYPE_NONE)
-                return 0;
-
-	    int blockIdx = outputIdx % layerSize; 
-            // calculate the error
-            real_t diff = (target - output)*weights[blockIdx];
-            return (diff * diff);
-        }
-    };
-
-    struct ComputeOutputErrorFnWeighted
-    {
-        int layerSize;
-	const real_t *weights; 
-        const char *patTypes;
-
-        __host__ __device__ real_t operator() (const thrust::tuple<const real_t&, const real_t&, int> &t) const
-        {
-            // unpack the tuple
-            real_t actualOutput = t.get<0>();
-            real_t targetOutput = t.get<1>();
-            int    outputIdx    = t.get<2>();
-
-            // calculate the pattern index
-            int patIdx = outputIdx / layerSize;
-
-            // check if the pattern is a dummy
-            if (patTypes[patIdx] == PATTYPE_NONE)
-                return 0;
-	    
-            int blockIdx = outputIdx % layerSize; 
-            // calculate the error
-            real_t error = (actualOutput - targetOutput)*weights[blockIdx];
-
-            return error;
-        }
-    };
     
     // For logData
-    struct ComputeKLDFn
+    struct ComputeKLDFnLog
     {
         int layerSize;
 	//int maxTime;
@@ -110,7 +60,7 @@ namespace {
         const char   *patTypes;
 	const real_t *mvData;
 	real_t       *errorBuf;
-	real_t        dim;
+	real_t        factor;
         __host__ __device__ real_t operator() (const thrust::tuple<real_t, real_t, int> &values) const
         {
             // unpack the tuple
@@ -137,17 +87,60 @@ namespace {
 	    tarLin = (tarLin > -helpers::NumericLimits<real_t>::expLimit())?(exp(tarLin)):(0);
 	    outLin = (outLin > -helpers::NumericLimits<real_t>::expLimit())?(exp(outLin)):(0);
 	    
-	    *(errorBuf + outputIdx) = (var * (outLin - tarLin))/dim;
-            return (tarLin * (var * (target - output) - 1) + outLin)/dim;
+	    *(errorBuf + outputIdx) = (var * (outLin - tarLin))/factor;
+            return (tarLin * (var * (target - output) - 1) + outLin)/factor;
         }
     };
 
+    // For linear Data
+    struct ComputeKLDFnLinear
+    {
+        int layerSize;
+	//int maxTime;
+	
+        const char   *patTypes;
+	const real_t *mvData;
+	real_t       *errorBuf;
+	real_t        factor;
+        __host__ __device__ real_t operator() (const thrust::tuple<real_t, real_t, int> &values) const
+        {
+            // unpack the tuple
+            real_t target = values.get<0>();
+            real_t output = values.get<1>();
+            int outputIdx = values.get<2>();
+	    
+            // check if we have to skip this value
+            int patIdx = outputIdx    / layerSize;
+            if (patTypes[patIdx] == PATTYPE_NONE){
+		*(errorBuf + outputIdx) = 0;
+                return 0;
+	    }
+	    
+	    int featDim   = outputIdx % layerSize;
+	    
+	    // get linear value
+	    real_t mean   = *(mvData + featDim);
+	    real_t var    = *(mvData + featDim + layerSize);
+	    real_t tarLin = var*target + mean;
+	    real_t outLin = var*output + mean;
+	    
+	    // upper unbounded
+	    real_t ratio = helpers::max(helpers::NumericLimits<real_t>::min(), tarLin/outLin);
+	    
+	    *(errorBuf + outputIdx) = (var * (1 - ratio))/factor;
+	    
+            return (tarLin * log(ratio) - tarLin + outLin)/factor;
+        }
+    };
+    
+    /*
     struct ComputeOutputErrorFn
     {        
     	int layerSize;
     	const char   *patTypes;
 	const real_t *mvData;
-    	__host__ __device__ real_t operator() (const thrust::tuple<const real_t&, const real_t&, int> &t) const        
+    	__host__ __device__ real_t operator() 
+	(const thrust::tuple<const real_t&, const real_t&, int> &t) const        
     	{   
 	    // unpack the tuple
 	    real_t actualOutput = t.get<0>();
@@ -164,7 +157,7 @@ namespace {
 	    real_t error = actualOutput - targetOutput;
 	    return error;
 	}
-    };
+	};*/
     
 } // anonymous namespace
 } // namespace anonymous
@@ -179,14 +172,17 @@ namespace layers {
     {
 	const Configuration &config = Configuration::instance();
 	m_dataType = config.KLDOutputDataType();
-	if(m_dataType != KLDOUTPUTDATATYPE_LOG_UNI) {
-	    throw std::runtime_error(std::string("Only implemented log data for KLD output"));
+	if(m_dataType != KLDOUTPUTDATATYPE_LOG_UNI && m_dataType != KLDOUTPUTDATATYPE_LINEAR_UNI) {
+	    printf("Please specify --targetDataType");
+	    throw std::runtime_error(std::string("Only log (2) and linear (1) data for KLD layer"));
 	}
 	
 	if (config.datamvPath().size()<1){
 	    throw std::runtime_error(std::string("KLD output requires mean and var (--datamv)"));
 	}
 	
+	m_lrFactor = config.lrFactor();
+	printf("KLD scale factor: %f", m_lrFactor);
 
 	// initialize the buffer
 	m_errorBuf = this->_actualOutputs();
@@ -209,36 +205,64 @@ namespace layers {
     real_t KLPostOutputLayer<TDevice>::calculateError()
     {
 		    
-	if(this->flagMseWeight())
-	{
-	    internal::ComputeKLDFnWeighted fn;
-	    fn.layerSize = this->size();
-	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
-	    fn.weights   = helpers::getRawPointer(this->_mseWeight());
-	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
-	    
-	    real_t mse = (real_t)0.5 * thrust::transform_reduce(
-	         thrust::make_zip_iterator(
-			thrust::make_tuple(this->_targets().begin(),   
-					   this->_actualOutputs().begin(),   
-					   thrust::counting_iterator<int>(0))),
-		 thrust::make_zip_iterator(
-			thrust::make_tuple(this->_targets().begin()+n, 
-					   this->_actualOutputs().begin()+n, 
-					   thrust::counting_iterator<int>(0)+n)),
-		 fn,
-		 (real_t)0,
-		 thrust::plus<real_t>()
-            );
-	    return mse;
-	    
-	}else{
-	    internal::ComputeKLDFn fn;
+	if(m_dataType == KLDOUTPUTDATATYPE_LINEAR_UNI){
+	    internal::ComputeKLDFnLinear fn;
 	    fn.layerSize = this->size();
 	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
 	    fn.mvData    = helpers::getRawPointer(this->_mvVector());
 	    fn.errorBuf  = helpers::getRawPointer(m_errorBuf);
-	    fn.dim       = (real_t)this->size();
+	    fn.factor    = m_lrFactor;
+	    
+	    //fn.maxTime   = this->maxSeqLength();
+	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
+
+	    real_t mse = (real_t) thrust::transform_reduce(
+               thrust::make_zip_iterator(
+		   thrust::make_tuple(this->_targets().begin(),   
+				      this->_actualOutputs().begin(),   
+				      thrust::counting_iterator<int>(0))),
+               thrust::make_zip_iterator(
+		   thrust::make_tuple(this->_targets().begin()+n, 
+				      this->_actualOutputs().begin()+n, 
+				      thrust::counting_iterator<int>(0)+n)),
+	       fn,
+	       (real_t)0,
+	       thrust::plus<real_t>()
+	       );
+	    
+	    // Debug
+	    /*Cpu::real_vector target = this->_targets();
+	    Cpu::real_vector output = this->_actualOutputs();
+	    Cpu::real_vector mvData = this->_mvVector();
+	    Cpu::pattype_vector patTyp = this->patTypes();
+	    real_t mse_temp = 0;
+	    for (int outputIdx = 0; outputIdx < n; outputIdx++){
+		int featDim = outputIdx % this->size();
+		int patIdx  = outputIdx / this->size();
+		if (patTyp[patIdx] == PATTYPE_NONE)
+		    continue;
+		
+		real_t mean   = mvData[featDim];
+		real_t var    = mvData[featDim + this->size()];
+		real_t tarLin = var*target[outputIdx] + mean;
+		real_t outLin = var*output[outputIdx] + mean;
+		real_t ratio  = tarLin / outLin;
+		
+		mse_temp += (tarLin * std::log(ratio) - tarLin + outLin) / m_lrFactor;
+		if (mse_temp != mse_temp){
+		    mse_temp = 0;
+		}
+		}*/
+	    return mse;
+	    
+	}else if(m_dataType == KLDOUTPUTDATATYPE_LOG_UNI){
+	    internal::ComputeKLDFnLog fn;
+	    fn.layerSize = this->size();
+	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
+	    fn.mvData    = helpers::getRawPointer(this->_mvVector());
+	    fn.errorBuf  = helpers::getRawPointer(m_errorBuf);
+	    fn.factor    = m_lrFactor;
+	    
 	    //fn.maxTime   = this->maxSeqLength();
 	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 
@@ -256,6 +280,11 @@ namespace layers {
 	       thrust::plus<real_t>()
 	       );
 	    return mse;
+	    
+	}else{
+	    // can't be here
+	    printf("Please specify --targetDataType");
+	    throw std::runtime_error(std::string("Only log (2) and linear (1) data for KLD layer"));
 	}
     }
 
@@ -268,49 +297,27 @@ namespace layers {
     void KLPostOutputLayer<TDevice>::computeBackwardPass()
     {
      // calculate the errors
-	if(this->flagMseWeight())
-	{
-	    internal::ComputeOutputErrorFnWeighted fn;
-	    fn.layerSize = this->size();
-	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
-	    fn.weights   = helpers::getRawPointer(this->_mseWeight());
-
-	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
-
-	    thrust::transform(
-            thrust::make_zip_iterator(thrust::make_tuple(this->_actualOutputs().begin(),   
-							 this->_targets().begin(),   
-							 thrust::counting_iterator<int>(0))),
-            thrust::make_zip_iterator(thrust::make_tuple(this->_actualOutputs().begin()+n, 
-							 this->_targets().begin()+n, 
-							 thrust::counting_iterator<int>(0)+n)),
-            this->_outputErrors().begin(),
-            fn
-	    );
-	}else{
-	    /*internal::ComputeOutputErrorFn fn;
-	    fn.layerSize = this->size();
-	    fn.patTypes  = helpers::getRawPointer(this->patTypes());
-	    fn.mvData    = helpers::getRawPointer(this->_mvVector());*/
-	    
-	    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
-
-	    /*thrust::transform(
-            thrust::make_zip_iterator(
-		thrust::make_tuple(this->_actualOutputs().begin(),   
-				   this->_targets().begin(),   
-				   thrust::counting_iterator<int>(0))),
-            thrust::make_zip_iterator(
-		thrust::make_tuple(this->_actualOutputs().begin()+n, 
-				   this->_targets().begin()+n, 
-				   thrust::counting_iterator<int>(0)+n)),
-            this->_outputErrors().begin(),
-            fn
-            );*/
-	    thrust::copy(m_errorBuf.begin(), m_errorBuf.begin() + n, this->_outputErrors().begin());
-	}
+	/*internal::ComputeOutputErrorFn fn;
+	  fn.layerSize = this->size();
+	  fn.patTypes  = helpers::getRawPointer(this->patTypes());
+	  fn.mvData    = helpers::getRawPointer(this->_mvVector());*/
+	
+	int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
+	
+	/*thrust::transform(
+	  thrust::make_zip_iterator(
+	  thrust::make_tuple(this->_actualOutputs().begin(),   
+	  this->_targets().begin(),   
+	  thrust::counting_iterator<int>(0))),
+	  thrust::make_zip_iterator(
+	  thrust::make_tuple(this->_actualOutputs().begin()+n, 
+	  this->_targets().begin()+n, 
+	  thrust::counting_iterator<int>(0)+n)),
+	  this->_outputErrors().begin(),
+	  fn
+	  );*/
+	thrust::copy(m_errorBuf.begin(), m_errorBuf.begin() + n, this->_outputErrors().begin());
     }
-
 
     // explicit template instantiations
     template class KLPostOutputLayer<Cpu>;

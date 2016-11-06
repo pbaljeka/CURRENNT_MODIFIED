@@ -47,17 +47,19 @@ namespace layers {
         const real_t m_learningRate;
 
         //real_vector m_outputErrors;
-        real_vector m_weights;
-        real_vector m_weightUpdates;
+        real_vector  m_weights;
+        real_vector  m_weightUpdates;
 	
 	// Add 04-13 for weight Mask
-	real_vector m_weightMask;  // the float data to store weight mask
-	bool m_weightMaskFlag;     // whether to use the weight Mask
-	int m_weightNum;           // the number of weights
-
+	real_vector  m_weightMask;  // the float data to store weight mask	
+	bool         m_weightMaskFlag;     // whether to use the weight Mask
+	
+	int          m_weightNum;           // the number of weights
+	unsigned     m_optOpt;
     protected:
-        real_vector& _weightUpdates();
-
+        real_vector&    _weightUpdates();
+	const unsigned& _optOpt() const;
+	
     public:
         /**
          * Constructs the Layer
@@ -158,6 +160,8 @@ namespace layers {
 	void readWeightMask(std::vector<real_t>::iterator b, std::vector<real_t>::iterator e);
 
 	const bool& flagUseWeightMask() const;
+
+	const bool& adaGrad() const;
 
 	virtual void maskWeight();
 	

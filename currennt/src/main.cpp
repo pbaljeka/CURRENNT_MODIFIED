@@ -50,6 +50,10 @@
 #include <cstdlib>
 #include <iomanip>
 
+//
+#define MAIN_BLOWED_THRESHOLD 5 // how many times after training errors blowed before terminating
+
+
 
 void swap32 (uint32_t *p)
 {
@@ -183,7 +187,7 @@ int trainerMain(const Configuration &config)
 	}
 
         // create the neural network
-        printf("Creating the neural network... ");
+        printf("Creating the neural network...");
         fflush(stdout);
         int inputSize = -1;
         int outputSize = -1;
@@ -226,8 +230,8 @@ int trainerMain(const Configuration &config)
 	    neuralNetwork.postOutputLayer().size())
             throw std::runtime_error("Post output layer size != target size(test set)");
 
-	printf("done.\n");
-        printf("Layers:\n");
+	printf("\nNetwork construction done.\n\n");
+        printf("Network summary:\n");
         printLayers(neuralNetwork);
         printf("\n");
 
@@ -292,7 +296,8 @@ int trainerMain(const Configuration &config)
                     config.maxEpochs(), config.maxEpochsNoBest(), 
 		    config.validateEvery(), config.testEvery(),
                     config.learningRate(), config.momentum(), config.weLearningRate(),
-		    config.lrDecayRate(), config.lrDecayEpoch()
+		    config.lrDecayRate(), config.lrDecayEpoch(),
+		    config.optimizerOption()
                     );
                 optimizer.reset(sdo);
                 break;
@@ -347,27 +352,32 @@ int trainerMain(const Configuration &config)
 	    printf("---------\n");
 	    std::cout << infoRows;
 	    
-	    int blowedTime = 0;
-            bool finished = false;
+
+
+	    // tranining loop
+	    int  blowedTime = 0;
+            bool finished   = false;
+	    
             while (!finished) {
+		
                 const char *errFormat = (classificationTask ? 
-					 "%6.2lf%%%10.3lf |" : 
-					 "%14.3lf /%10.3lf |");
+					 "%6.2lf%%%10.3lf |" : "%14.3lf /%10.3lf |");
                 const char *errSpace  = "                           |";
 
                 // train for one epoch and measure the time
                 infoRows += printfRow(" %5d | ", optimizer->currentEpoch() + 1);
                 
                 boost::posix_time::ptime startTime=boost::posix_time::microsec_clock::local_time();
+
                 finished = optimizer->train();
 
 		// Add 0511: if optimizer is blowed, decrease the learning_rate and start again
 		if (optimizer->blowed()){
-		    optimizer->reinit();
-		    optimizer->adjustLR(1);
-		    neuralNetwork.reInitWeight();
+		    optimizer->reinit();          // reinitialize
+		    optimizer->adjustLR(1);       // 
+		    neuralNetwork.reInitWeight(); 
 		    //neuralNetwork.initOutputForMDN(*dataMV);
-		    if (++blowedTime > 10){
+		    if (++blowedTime > MAIN_BLOWED_THRESHOLD){
 			printf("Learning rate tuning timeout\n");
 			printf("Please change configuration and re-train\n");
 			finished = true;
@@ -377,8 +387,9 @@ int trainerMain(const Configuration &config)
 		
                 boost::posix_time::ptime endTime = boost::posix_time::microsec_clock::local_time();
                 double duration = (double)(endTime - startTime).total_milliseconds() / 1000.0;
-
                 infoRows += printfRow("%8.1lf |", duration);
+		
+		// print errors
                 if (classificationTask)
                     infoRows += printfRow(errFormat, 
 					  (double)optimizer->curTrainingClassError()*100.0, 
@@ -414,45 +425,47 @@ int trainerMain(const Configuration &config)
                 }
                 else
                     infoRows += printfRow("%s", errSpace);
-
-                if (!validationSet->empty() && 
-		    optimizer->currentEpoch() % config.validateEvery() == 0) {
+		
+		// check whether to terminate training
+                if (!validationSet->empty()&&optimizer->currentEpoch()%config.validateEvery()==0){
+		    
                     if (optimizer->epochsSinceLowestValidationError() == 0) {
-                        infoRows += printfRow("  yes   \n");
+			
+                        infoRows += printfRow("  yes %s\n", optimizer->optStatus().c_str());
                         if (config.autosaveBest()) {
                             std::stringstream saveFileS;
+			    
                             if (config.autosavePrefix().empty()) {
                                 size_t pos = config.networkFile().find_last_of('.');
                                 if (pos != std::string::npos && pos > 0)
                                     saveFileS << config.networkFile().substr(0, pos);
                                 else
                                     saveFileS << config.networkFile();
-                            }
-                            else
+                            }else{
                                 saveFileS << config.autosavePrefix();
+			    }
+			    
                             saveFileS << ".best.jsn";
-                            saveNetwork(neuralNetwork, 
-					saveFileS.str(), 
-					config.learningRate(), 
-					config.weLearningRate());
+                            saveNetwork(neuralNetwork,         saveFileS.str(), 
+					config.learningRate(), config.weLearningRate());
                         }
-                    }
-                    else{
-			if (optimizer->checkLRdecay())
-			    infoRows += printfRow("  no(DecayLR) \n");			    
-			else
-			    infoRows += printfRow("  no    \n");
+                    }else{
+			infoRows += printfRow("  no  %s\n", optimizer->optStatus().c_str());
 		    }
-                }
-                else
+                }else{
                     infoRows += printfRow("        \n");
-
+		}
+		
                 // autosave
-                if (config.autosave())
-                    saveState(neuralNetwork, *optimizer, infoRows, 
-			      config.learningRate(), config.weLearningRate());
+                if (config.autosave()){
+                    saveState(neuralNetwork,  *optimizer, infoRows, 
+			      config.learningRate(), 
+			      config.weLearningRate());
+		}
             }
+	    
 
+	    // Finish training
             printf("\n");
 
             if (optimizer->epochsSinceLowestValidationError() == config.maxEpochsNoBest())
@@ -506,9 +519,22 @@ int trainerMain(const Configuration &config)
 		// 2. output layer is not the last output
 		// 3. MDN, output the distribution parameter
 	       	// 4. MDN, output is from the sigmoid or softmax unit
-	
-		// escape the dimension corresponding to the sigmoid or softmax units
+		
+		// If the outputMeans and outputStdevs are not in test.nc file
+		// we can provide the data.mv through --datamv
+		if (config.datamvPath().size()>0){
+		    if (dataMV == NULL)
+			throw std::runtime_error("Can't read datamv");
+		    if (dataMV->outputM().size() != outputMeans.size())
+			throw std::runtime_error("output dimension mismatch datamv");
+		    for (int y = 0; y < outputMeans.size(); y++){
+			outputMeans[y]  = dataMV->outputM()[y];
+			outputStdevs[y] = dataMV->outputV()[y];
+		    }
+		}
+
 		/* Add 05-31*/
+		// escape the dimension corresponding to the sigmoid or softmax units
 		Cpu::real_vector mdnConfigVec = neuralNetwork.getMdnConfigVec();
 		if (!mdnConfigVec.empty()){
 		    // if the unit is sigmoid or softmax, set the mean and std
@@ -521,7 +547,8 @@ int trainerMain(const Configuration &config)
 				outputMeans[y] = 0.0;
 				outputStdevs[y] = 1.0;
 			    }
-			    printf("Output espace de-normalization from %d to %d\n", unitSOut+1, unitEOut);
+			    printf("Output without de-normalization for dimension");
+			    printf("from %d to %d\n", unitSOut+1, unitEOut);
 			}else{
 			    // nothing for GMM unit
 			}
@@ -529,6 +556,9 @@ int trainerMain(const Configuration &config)
 		}else{
 		    // nothing for network without MDN
 		}
+
+		
+		
             }else{
 		printf("Outputs will NOT be scaled by mean and std specified in NC file.\n");
 	    }

@@ -38,11 +38,11 @@
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/functional.h>
+#include <thrust/fill.h>
 #include <thrust/sequence.h>
 #include <thrust/iterator/counting_iterator.h>
 
 #include <cmath>
-
 
 namespace internal {
 
@@ -71,6 +71,13 @@ namespace layers {
         return m_weightUpdates;
     }
     
+     
+    template <typename TDevice>
+    const unsigned& TrainableLayer<TDevice>::_optOpt() const
+    {
+        return m_optOpt;
+    }
+    
     template <typename TDevice>
     TrainableLayer<TDevice>::TrainableLayer(const helpers::JsonValue &layerChild, 
 					    const helpers::JsonValue &weightsSection, 
@@ -94,10 +101,15 @@ namespace layers {
             throw std::runtime_error(std::string("Missing value 'bias' in layer '") + 
 				     this->name() + "'");
 
-        // extract the weights if they are given in the network file
+	const Configuration &config = Configuration::instance();
+	
+	m_optOpt = config.optimizerOption();
+	
+	// extract the weights if they are given in the network file
         Cpu::real_vector weights;
 
         if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())) {
+	    printf("Trainable layer: re-read weight");
             if (!weightsSection->HasMember(this->name().c_str()))
                 throw std::runtime_error(std::string("Missing weights section for layer '") + 
 					 this->name() + "'");
@@ -150,12 +162,11 @@ namespace layers {
         }
         // create random weights if no weights are given in the network file
         else {
+	    printf("Trainable layer: initialize weight");
             weights.resize(this->size() * 
 			   (inputWeightsPerBlock * (m_precedingLayer.size() + 1) + 
 			    internalWeightsPerBlock)
-			   );
-
-            const Configuration &config = Configuration::instance();
+			   );           
 
             static boost::mt19937 *gen = NULL;
             if (!gen) {
@@ -222,9 +233,11 @@ namespace layers {
     {
         //std::cout << "Creating layer " << this->name() << std::endl;
         // check if the bias value exists
-        if (!layerChild->HasMember("bias"))
+        /*if (!layerChild->HasMember("bias"))
             throw std::runtime_error(std::string("Missing value 'bias' in layer '") + 
 				     this->name() + "'");
+	// Configuration
+	const Configuration &config = Configuration::instance();
 
         // extract the weights if they are given in the network file
         Cpu::real_vector weights;
@@ -282,7 +295,7 @@ namespace layers {
         else {
             weights.resize(weightSize);
 
-            const Configuration &config = Configuration::instance();
+            
 
             static boost::mt19937 *gen = NULL;
             if (!gen) {
@@ -303,16 +316,17 @@ namespace layers {
                     weights[i] = dist(*gen);
             }
         }
-
+	
         m_weights       = weights;
         m_weightUpdates = weights;
-	
+		
 	// Add 04013 Wang: for weight Mask
 	for (size_t i = 0; i < weights.size(); ++i)
 	    weights[i] = 1.0;
 	m_weightMask    = weights;          // make it the same length as weights matrix 
 	m_weightNum     = weights.size();   // 
-	m_weightMaskFlag= false;	
+	m_weightMaskFlag= false;	*/
+	throw std::runtime_error("Not implemented");
     }
 
 
@@ -346,7 +360,7 @@ namespace layers {
         return m_learningRate;
     }
 
-/*    template <typename TDevice>
+    /*  template <typename TDevice>
     typename TrainableLayer<TDevice>::real_vector& TrainableLayer<TDevice>::outputErrors()
     {
         return m_outputErrors;
@@ -675,6 +689,7 @@ namespace layers {
     {
 	return m_internalWeightsPerBlock;
     }
+    
 
     // explicit template instantiations
     template class TrainableLayer<Cpu>;

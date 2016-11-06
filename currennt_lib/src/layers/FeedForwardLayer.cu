@@ -80,7 +80,7 @@ namespace {
             t.get<0>() = delta;
         }
     };
-
+    
     struct ComputeBiasWeightUpdateFn
     {
         int    layerSize;
@@ -103,6 +103,17 @@ namespace {
         }
     };
 
+    /*struct GradientAverage
+    {
+	real_t timeStep;
+	real_t *gradients;
+        __host__ __device__ void operator() (const int &index) const
+        {
+	    *(gradients + index) = *(gradients + index)/timeStep;
+        }
+	};*/
+
+
 } // anonymous namespace
 } // namespace internal
 
@@ -116,6 +127,7 @@ namespace layers {
         Layer<TDevice> &precedingLayer)
         : TrainableLayer<TDevice>(layerChild, weightsSection, 1, 0, precedingLayer)
     {
+	
     }
 
     template <typename TDevice, typename TActFn>
@@ -149,9 +161,18 @@ namespace layers {
     {
         // collect outputs from preceding layer
         {{
-            helpers::Matrix<TDevice> weightsMatrix  (&this->weights(),                  this->precedingLayer().size(), this->size());
-            helpers::Matrix<TDevice> plOutputsMatrix(&this->precedingLayer().outputs(), this->precedingLayer().size(), this->curMaxSeqLength() * this->parallelSequences());
-            helpers::Matrix<TDevice> outputsMatrix  (&this->_outputs(),                 this->size(),                  this->curMaxSeqLength() * this->parallelSequences());
+            helpers::Matrix<TDevice> weightsMatrix  (&this->weights(),                  
+						     this->precedingLayer().size(), this->size());
+	    
+            helpers::Matrix<TDevice> plOutputsMatrix(&this->precedingLayer().outputs(), 
+						     this->precedingLayer().size(), 
+						     this->curMaxSeqLength() * 
+						     this->parallelSequences());
+
+            helpers::Matrix<TDevice> outputsMatrix  (&this->_outputs(),                 
+						     this->size(),                  
+						     this->curMaxSeqLength() * 
+						     this->parallelSequences());
 
             outputsMatrix.assignProduct(weightsMatrix, true, plOutputsMatrix, false);
         }}
@@ -161,11 +182,13 @@ namespace layers {
             internal::ComputeOutputFn<TActFn> fn;
             fn.layerSize        = this->size();
             fn.bias             = this->bias();
-            fn.biasWeights      = helpers::getRawPointer(this->weights()) + this->size() * this->precedingLayer().size();
+            fn.biasWeights      = (helpers::getRawPointer(this->weights()) + 
+				   this->size() * this->precedingLayer().size());
 
             thrust::transform(
                 this->_outputs().begin(),
-                this->_outputs().begin() + this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+                (this->_outputs().begin() + 
+		 this->curMaxSeqLength() * this->parallelSequences() * this->size()),
                 thrust::counting_iterator<int>(0),
                 this->_outputs().begin(),
                 fn
@@ -183,19 +206,32 @@ namespace layers {
             int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 
             thrust::for_each(
-                thrust::make_zip_iterator(thrust::make_tuple(this->outputErrors().begin(),   this->outputs().begin())),
-                thrust::make_zip_iterator(thrust::make_tuple(this->outputErrors().begin()+n, this->outputs().begin()+n)),
+                thrust::make_zip_iterator(thrust::make_tuple(this->outputErrors().begin(),   
+							     this->outputs().begin())),
+                thrust::make_zip_iterator(thrust::make_tuple(this->outputErrors().begin()+n, 
+							     this->outputs().begin()+n)),
                 fn
                 );
         }}
 
         // back-propagate the error to the preceding layer
         {{
-            TrainableLayer<TDevice> *pl = dynamic_cast<TrainableLayer<TDevice>*>(&this->precedingLayer());
+            TrainableLayer<TDevice> *pl = 
+		dynamic_cast<TrainableLayer<TDevice>*>(&this->precedingLayer());
+	    
 	    if (pl) {
-                helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      pl->size(),   this->size());
-                helpers::Matrix<TDevice> plErrorsMatrix(&pl->outputErrors(),   pl->size(),   this->curMaxSeqLength() * this->parallelSequences());
-                helpers::Matrix<TDevice> deltasMatrix  (&this->outputErrors(), this->size(), this->curMaxSeqLength() * this->parallelSequences());
+                helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      
+							pl->size(),   
+							this->size());
+                helpers::Matrix<TDevice> plErrorsMatrix(&pl->outputErrors(),   
+							pl->size(),   
+							this->curMaxSeqLength() * 
+							this->parallelSequences());
+                helpers::Matrix<TDevice> deltasMatrix  (&this->outputErrors(), 
+							this->size(), 
+							this->curMaxSeqLength() * 
+							this->parallelSequences());
+		
                 plErrorsMatrix.assignProduct(weightsMatrix, false, deltasMatrix, false);
             }else{
 		/* Add 16-02-22 Wang: for WE updating */
@@ -203,9 +239,19 @@ namespace layers {
 		// we need to propagate the errors back to the input layer
 		Layer<TDevice> *pl2 = dynamic_cast<Layer<TDevice>*>(&this->precedingLayer());
 		if (this->precedingLayer().inputWeUpdate()){
-		    helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      pl2->size(),  this->size());
-		    helpers::Matrix<TDevice> plErrorsMatrix(&pl2->outputErrors(),  pl2->size(),  this->curMaxSeqLength() * this->parallelSequences());
-		    helpers::Matrix<TDevice> deltasMatrix  (&this->outputErrors(), this->size(), this->curMaxSeqLength() * this->parallelSequences());
+		    helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      
+							    pl2->size(),  
+							    this->size());
+
+		    helpers::Matrix<TDevice> plErrorsMatrix(&pl2->outputErrors(),  
+							    pl2->size(),  
+							    this->curMaxSeqLength() * 
+							    this->parallelSequences());
+
+		    helpers::Matrix<TDevice> deltasMatrix  (&this->outputErrors(), 
+							    this->size(), 
+							    this->curMaxSeqLength() * 
+							    this->parallelSequences());
 		    plErrorsMatrix.assignProduct(weightsMatrix, false, deltasMatrix, false);
 		}
 	    }
@@ -213,9 +259,19 @@ namespace layers {
 
         // compute the input weight updates
         {{
-            helpers::Matrix<TDevice> weightUpdatesMatrix(&this->_weightUpdates(),           this->precedingLayer().size(), this->size());
-            helpers::Matrix<TDevice> plOutputsMatrix    (&this->precedingLayer().outputs(), this->precedingLayer().size(), this->curMaxSeqLength() * this->parallelSequences());
-            helpers::Matrix<TDevice> deltasMatrix       (&this->outputErrors(),             this->size(),                  this->curMaxSeqLength() * this->parallelSequences());
+            helpers::Matrix<TDevice> weightUpdatesMatrix(&this->_weightUpdates(),           
+							 this->precedingLayer().size(), 
+							 this->size());
+
+            helpers::Matrix<TDevice> plOutputsMatrix    (&this->precedingLayer().outputs(), 
+							 this->precedingLayer().size(), 
+							 this->curMaxSeqLength() * 
+							 this->parallelSequences());
+	    
+            helpers::Matrix<TDevice> deltasMatrix       (&this->outputErrors(),             
+							 this->size(),                  
+							 this->curMaxSeqLength() * 
+							 this->parallelSequences());
 
             weightUpdatesMatrix.assignProduct(plOutputsMatrix, false, deltasMatrix, true);
         }}
@@ -235,6 +291,23 @@ namespace layers {
                 fn
                 );
         }}
+	
+	/*
+	if (this->_optOpt()){
+	    
+	    {{
+		internal::GradientAverage fn;
+		fn.timeStep = (real_t)(this->curMaxSeqLength() * this->parallelSequences());
+		fn.gradients= helpers::getRawPointer(this->_weightUpdates());		
+		thrust::for_each(
+				 thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0) + this->_weightUpdates().size(),
+				 fn
+                );
+
+	    }}
+	    
+	    }*/
     }
 
 

@@ -49,6 +49,8 @@
 
 #include <cmath>
 
+#define DEBUG_CLOCKRNN 1
+
 namespace internal{
 namespace {
 
@@ -89,7 +91,7 @@ namespace {
             // load the niag activations
             real_t unitAct = unitActs[outputIdx];
 	    	    
-	    if (skipCRNN  != NULL && skipCRNN[blockIdx]){
+	    if (skipCRNN  != NULL && skipCRNN[blockIdx] && !firstCall){
 		// for ClockRNN skip this step, just use the output of previous step
 		unitAct        = unitActs[outputIdx + prevOutputDistance];
 	    }else{
@@ -513,10 +515,20 @@ namespace layers {
 		    
 		    fm.skipCRPos = timestep * rows * paralNum;
 		    bm.skipCRPos = timestep * rows * paralNum;
+
+		    if (DEBUG_CLOCKRNN){
+			printf("%d:\n", timestep);
+			for(int i = 0; i < tmpFlagCR.size(); i++){
+			    printf("%d ", tmpFlagCR[i]);
+			}
+			printf("\n");
+		    }
+		    
 		    thrust::copy(tmpFlagCR.begin(), tmpFlagCR.end(), 
 				 m_fw.skipCR.begin() + fm.skipCRPos);
 		    thrust::copy(tmpFlagCR.begin(), tmpFlagCR.end(), 
 				 m_bw.skipCR.begin() + bm.skipCRPos);
+		    
 		    fm.h2hIdx    = h2hMatrixIdx;
 		    bm.h2hIdx    = h2hMatrixIdx;
 		    //fm.skipCR = tmpSkipFlagCR;
@@ -748,6 +760,7 @@ namespace layers {
 	    }
 	    // For debug
 	    // Show all the H2H matrices
+	    if (DEBUG_CLOCKRNN){
 	    Cpu::real_vector h2hMatrix_debug = m_h2hClockRNN;
 	    int biasPos_debug = 0;
 	    for (int i = 0; i < m_numH2Hmat; i++){
@@ -773,9 +786,11 @@ namespace layers {
 		}
 	    }
 	    // Show matrix index
+	    printf("Time-MatrixIdx\n");
 	    for (int t = 0; t < this->curMaxSeqLength(); t++){
-		printf("%d %d ", t, m_fw.timestepMatrices[t].h2hIdx);
+		printf("%5d-%3d ", t, m_fw.timestepMatrices[t].h2hIdx);
 		if (t % 10 == 9) printf("\n");
+	    }
 	    }
 	}
 	
