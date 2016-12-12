@@ -2,27 +2,38 @@
 | Notice                                                                      |
 +=============================================================================+
 This is a modified version of CURRENNT, by Xin WANG, wangxin@nii.ac.jp.
+
 New features added:
-1. Highway network 
+1. Plain RNN and Clock RNN
+   Koutnik, J., Greff, K., Gomez, F., & Schmidhuber, J. (2014). A Clockwork RNN. In Proc. ICML
+   
+   Clock RNN can use both fixed updating schedule or Context-dependent schedule
+
+2. Highway network abd Residual network
    Srivastava, Rupesh K., Klaus Greff, and Jürgen Schmidhuber. "Training very
    deep networks." Advances in Neural Information Processing Systems. 2015.
 
-2. Mixture mensity model
+3. Mixture density model
    Bishop, Christopher M. "Mixture density networks." (1994).
 
-3. Multi-stream network (based on weight mask)
-      
-4. Easy reading and updating of one-hot vector and continuous vector as input feature
+4. Autoregressive output layer, with both real and complex poles in the AR model
 
+5. Multi-stream network (based on weight mask)
+  
 Other features:
 1. initialize selected layers using a trained network
-2. output of intermediate layers
+2. output of intermediate layers (e.g., from Highway gate)
 3. weighted SSE criterion
-4. ReLU for hidden node
+4. ReLU 
+5. AdaGrad
+6. Easy reading and updating of one-hot vector and continuous vector as input feature
+...
 
-Please take a look at the CURRENNT_SCRIPTS on my github. There examples related
+Please take a look at the CURRENNT_SCRIPTS on my github. There are examples related
 to the above modification.
 
+
+------------
 
 CURRENNT is written in C++/CUDA and runs on Windows and Linux. It requires a
 CUDA-capable graphics card with a compute capability of 1.3 or higher (i.e. at
