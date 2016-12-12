@@ -48,6 +48,7 @@
 #include <boost/lexical_cast.hpp>
 
 #include <cmath>
+#include <climits>
 
 #define DEBUG_CLOCKRNN 0
 
@@ -93,6 +94,9 @@ namespace {
 	    	    
 	    if (skipCRNN  != NULL && skipCRNN[blockIdx] && !firstCall){
 		// for ClockRNN skip this step, just use the output of previous step
+		// Note: unitActs = H2H * PreviousVector + I2H * input
+		//       we can't directly use unitAct = unitActs[outputIdx]
+		//       but must copy the previous value
 		unitAct        = unitActs[outputIdx + prevOutputDistance];
 	    }else{
 		// other cases, Wx + Wh + b
@@ -204,6 +208,7 @@ namespace {
 
             // store the gradients
             unitDeltas[outputIdx] = helpers::limitedError(unitDeltaData);
+	    //unitDeltas[outputIdx] = unitDeltaData;
         }
     };
 
@@ -244,7 +249,8 @@ namespace {
     };
        
     struct SetH2HMatrix{
-	
+	// Create the H2Hmatrix for each time step
+	// The created matrix is a lower-triangle (block) matrix
 	int    *bandConfig;
 	int     bandNum;
 	real_t *sourceW;
@@ -258,13 +264,19 @@ namespace {
 	    int rows        = sourcePos % featDim;
 	    int cols        = sourcePos / featDim;
 	    
-	    int colStart = 0;
-	    int colEnd   = 0;
-	    int tmp = 0b01;
-	    bool flag = false;
+	    int colStart    = 0;
+	    int colEnd      = 0;
+	    int tmp         = 0b01;
+	    bool flag       = false;
 	    
+	    // given a point in one of the H2H matrix
+	    // for the matrix bands that are non-zero in this H2H matrix
+	    //     check if this point locates in the band (and in the lower-triangle area)
+	    //           if yes, this point is non-zero, copy the value for it
+	    //           if not
+	    //                diagonal point ? 1.0 : 0.0
 	    for (int band = 0; band<bandNum; band++){
-		if (bandIdx  & (tmp << band)){
+		if (bandIdx  & (tmp << band)){ // bit operation
 		    colStart = (band > 0)?(bandConfig[2*band-1]):(colStart);
 		    colEnd   = bandConfig[2*band+1];
 		    if (cols >= colStart && cols < colEnd && rows >= colStart){
@@ -279,6 +291,44 @@ namespace {
 	    }
 	}
     };
+
+    struct CreateSkipVecForContextDepedentCLRNN{
+	
+	int         bandNum;
+	int         featDim;
+	bool       *skipVec;
+	bool       *skipVec2;
+	const char *clockTime;
+	const int  *bandConfig;
+	
+	__host__ __device__ void operator() (const int idx) const{
+	    int dimIdx   = idx % featDim;
+	    int timeIdx  = idx / featDim;
+	    
+	    int DimStart    = 0;
+	    int DimEnd      = 0;
+	    int tmp         = 0b01;
+	    
+	    *(skipVec+idx)  = true;
+	    if (skipVec2 != NULL) *(skipVec2+idx)  = true;
+	    
+	    for (int band = 0; band<bandNum; band++){
+		DimStart = (band > 0)?(bandConfig[2*band-1]):(DimStart);
+		DimEnd   = bandConfig[2*band+1];
+		if (dimIdx >= DimStart && dimIdx < DimEnd){
+		    // find the band for this dimension
+		    // check whether this band will be updated at this time step
+		    // if yes, turn the skipFlag to false, i.e. update the hidden feature
+		    if (clockTime[timeIdx] & (tmp << band)){ 
+		    	*(skipVec+idx)  = false;
+			if (skipVec2 != NULL) *(skipVec2+idx)  = false;
+		    }
+		    break;
+		}
+	    }
+	}
+    };
+    
 }
 }
 
@@ -292,7 +342,6 @@ namespace layers {
     int ReadClockRNNOptions(const std::string options, Cpu::int_vector &m_crStep, const int size)
     {
 	// read in the option
-	// 
 	std::vector<std::string> tempArgs;
 	boost::split(tempArgs, options, boost::is_any_of("_"));
 	if ((tempArgs.size() % 2) != 0){
@@ -391,7 +440,23 @@ namespace layers {
 	    // initialize the ClockRNN Hidden2Hidden matrices
 	    m_h2hClockRNN.resize(els * els * (m_isBidirectional ? 2: 1) * (m_numH2Hmat), 0.0);
 	    
+	    // copy the configuration to device
 	    m_crStepDevice = m_crStep;
+
+	    // for Clock defined by auxiliary data
+	    Configuration config = Configuration::instance();
+	    if (config.auxillaryDataDir().size() > 0){
+		// check the number of block and the dimension of the auxiliary data
+		if ((m_crStep.size()/2) > config.auxillaryDataDim() * CHAR_BIT){
+		    printf("Auxillary data bit width is smaller than number of CLRNN block");
+		    throw std::runtime_error("Please check auxillary data");
+		}
+		// check parallel sentence
+		if (this->parallelSequences() > 1){
+		    throw std::runtime_error("ParallelSeq must be 1 for context-dependent CLRNN");
+		}
+	    }
+
 	}else{
 	    m_clockRNN     = false;
 	    m_crStep.clear();
@@ -502,10 +567,11 @@ namespace layers {
 
 		// for ClockRNN
 		if (m_clockRNN){
+		    // 
 		    // tmpFlagCR:    a skip flag for each dimenison in a parallel block
-		    // h2hMatrixIdx: in each time step, which hidden2hidden matrix should be used
-		    //               h2hMatrix \in [0, MaxNumberofH2HMatrix]
 		    Cpu::bool_vector tmpFlagCR(rows * paralNum, false);
+		    // h2hMatrixIdx: in each time step, which hidden2hidden matrix should be used
+		    //               [0  2^band_number-1]
 		    int h2hMatrixIdx = DimSkipFlagCR(tmpFlagCR, m_crStep, timestep, paralNum)-1;
 		    
 		    if (h2hMatrixIdx<0){
@@ -531,27 +597,6 @@ namespace layers {
 		    
 		    fm.h2hIdx    = h2hMatrixIdx;
 		    bm.h2hIdx    = h2hMatrixIdx;
-		    //fm.skipCR = tmpSkipFlagCR;
-		    //bm.skipCR = tmpSkipFlagCR;
-		    
-		    /*Cpu::int_vector  tmpCrStart; 
-		    Cpu::int_vector  tmpCrEnd;
-		    tmpCrStart.resize(m_crStep.size()/2,-1);
-		    tmpCrEnd.resize(m_crStep.size()/2,-1);
-		    int band = StartEndPos(m_crStep, timestep, tmpCrStart, tmpCrEnd);
-		    if (band<1){
-			printf("Zero input at time %d.", timestep);
-			throw std::runtime_error("Error in Timeresolution");
-		    }
-		    fm.m_crS.resize(band,-1);
-		    bm.m_crS.resize(band,-1);
-		    fm.m_crE.resize(band,-1);
-		    bm.m_crE.resize(band,-1);
-		    thrust::copy(tmpCrStart.begin(), tmpCrStart.begin()+band, fm.m_crS.begin());
-		    thrust::copy(tmpCrStart.begin(), tmpCrStart.begin()+band, bm.m_crS.begin());
-		    thrust::copy(tmpCrEnd.begin(),   tmpCrEnd.begin()+band, fm.m_crE.begin());
-		    thrust::copy(tmpCrEnd.begin(),   tmpCrEnd.begin()+band, bm.m_crE.begin());
-		    */
 		    
 		    // wrap the temporary hidden to hidden matrix for ClockRNN
 		    h2hMatrixIdx = h2hMatrixIdx * els * els;
@@ -570,17 +615,17 @@ namespace layers {
 	}else{
 	    // unidirectional case, directly use the forward operator
 	    Cpu::real_vector tmp(this->outputs().size(), 0);
+	    if (m_clockRNN){
+		Cpu::bool_vector tmp2(this->outputs().size(), false);
+		m_fw.skipCR        = tmp2;
+	    }
 	    m_fw.tmpOutputs        .swap(this->_outputs());     // just swap (directly use it)
 	    m_fw.tmpOutputErrors   .swap(this->outputErrors()); // 
 	    m_fw.unitActs          = tmp;
 	    m_fw.unitDeltas        = tmp;
 	    m_fw.unitActsBuf       = tmp;
 	    
-	    if (m_clockRNN){
-		Cpu::bool_vector tmp2(this->outputs().size()/2, false);
-		m_fw.skipCR        = tmp2;
-	    }
-
+	    
 	    // wrap the InputToHidden
 	    m_fw.weightMatrices.InputToHiddenWrap = 
 		helpers::Matrix<TDevice>(&this->weights(),        pls, els, 0);
@@ -625,9 +670,6 @@ namespace layers {
 
 		// for ClockRNN
 		if (m_clockRNN){		    
-		    // tmpFlagCR:    a skip flag for each dimenison in a parallel block
-		    // h2hMatrixIdx: in each time step, which hidden2hidden matrix should be used
-		    //               h2hMatrix \in [0, MaxNumberofH2HMatrix]
 		    Cpu::bool_vector tmpFlagCR(rows * paralNum, false);
 		    int h2hMatrixIdx = DimSkipFlagCR(tmpFlagCR, m_crStep, timestep, paralNum)-1;
 
@@ -638,25 +680,9 @@ namespace layers {
 
 		    // fm.skipCR = tmpSkipFlagCR;
 		    fm.skipCRPos = timestep * rows * paralNum;
-		    thrust::copy(tmpFlagCR.begin(),    tmpFlagCR.end(), 
+		    thrust::copy(tmpFlagCR.begin(),tmpFlagCR.end(), 
 				 m_fw.skipCR.begin() + fm.skipCRPos);
 		    fm.h2hIdx    = h2hMatrixIdx;
-		    
-		    /*
-		    Cpu::int_vector  tmpCrStart; 
-		    Cpu::int_vector  tmpCrEnd;
-		    tmpCrStart.resize(m_crStep.size()/2,-1);
-		    tmpCrEnd.resize(m_crStep.size()/2,-1);
-		    int band = StartEndPos(m_crStep, timestep, tmpCrStart, tmpCrEnd);
-		    if (band<1){
-			printf("Zero input at time %d", timestep);
-			throw std::runtime_error("Error in timeresolution configuration");
-		    }
-		    fm.m_crS.resize(band,-1);
-		    fm.m_crE.resize(band,-1);
-		    thrust::copy(tmpCrStart.begin(), tmpCrStart.begin()+band, fm.m_crS.begin());
-		    thrust::copy(tmpCrEnd.begin(),   tmpCrEnd.begin()+band, fm.m_crE.begin());
-		    */
 		    
 		    // wrap the temporary hidden to hidden matrix for ClockRNN
 		    h2hMatrixIdx = els * els * h2hMatrixIdx;
@@ -727,6 +753,50 @@ namespace layers {
 	    int ls      = this->size();
 	    int pls     = this->precedingLayer().size();
 	    int h2hsize = rows * rows;
+	    
+	    // Read in the context-dependent time clock
+	    if (fraction.auxDataDim()>0){
+		Cpu::pattype_vector clockTime = fraction.auxPattypeData();
+		if (clockTime.size() != this->curMaxSeqLength()){
+		    throw std::runtime_error("Error unequal length of clockTime size");
+		}
+		int h2hMatrixIdx = 0;
+		for (int t=0; t < this->curMaxSeqLength(); t++){
+		    // assign h2hIdx
+		    h2hMatrixIdx = (int)clockTime[t] - 1;
+		    m_fw.timestepMatrices[t].h2hIdx = h2hMatrixIdx;
+		    if(m_isBidirectional) {m_bw.timestepMatrices[t].h2hIdx = h2hMatrixIdx;}
+		    
+		    // assign h2hWarp
+		    h2hMatrixIdx = h2hMatrixIdx * rows * rows;
+		    m_fw.timestepMatrices[t].h2hWrap = 
+			helpers::Matrix<TDevice>(&m_h2hClockRNN, rows, rows, h2hMatrixIdx);
+		    
+		    h2hMatrixIdx = h2hMatrixIdx + m_h2hClockRNN.size()/2;
+		    if(m_isBidirectional) {m_bw.timestepMatrices[t].h2hWrap = 
+			    helpers::Matrix<TDevice>(&m_h2hClockRNN, rows, rows, h2hMatrixIdx);}
+		    
+		    // assign the skipCRNN vector and skipCRPos
+		    m_fw.timestepMatrices[t].skipCRPos = t * rows;
+		    if(m_isBidirectional) {m_bw.timestepMatrices[t].skipCRPos = 
+			    m_fw.timestepMatrices[t].skipCRPos;}
+		}
+
+		// Create the skipCR for every time step based on the boundary information
+		//   and band information
+		pattype_vector clockTimeDevice = clockTime;
+		internal::CreateSkipVecForContextDepedentCLRNN fn;
+		fn.bandNum    = m_crStepDevice.size()/2;
+		fn.featDim    = rows;
+		fn.bandConfig = helpers::getRawPointer(m_crStepDevice);
+		fn.skipVec    = helpers::getRawPointer(m_fw.skipCR);
+		fn.skipVec2   = (m_isBidirectional ? (helpers::getRawPointer(m_bw.skipCR)):NULL);
+		fn.clockTime  = helpers::getRawPointer(clockTimeDevice);
+		thrust::for_each(thrust::counting_iterator<int>(0),
+				 thrust::counting_iterator<int>(0) + m_fw.skipCR.size(),
+				 fn);
+	    }
+	    
 	    internal::SetH2HMatrix fn;
 	    if (m_isBidirectional){
 		fn.bandConfig = helpers::getRawPointer(m_crStepDevice);
@@ -740,7 +810,6 @@ namespace layers {
 				 thrust::counting_iterator<int>(0)      + h2hsize * m_numH2Hmat,
 				 fn);
 		
-
 		fn.sourceW    = helpers::getRawPointer(this->weights()) + ls * (pls + 1) + h2hsize;
 		fn.targetW    = helpers::getRawPointer(m_h2hClockRNN)   + h2hsize * m_numH2Hmat;
 		thrust::for_each(thrust::counting_iterator<int>(0),
@@ -756,24 +825,12 @@ namespace layers {
 		thrust::for_each(thrust::counting_iterator<int>(0),
 				 thrust::counting_iterator<int>(0)      + h2hsize * m_numH2Hmat,
 				 fn);
-		
 	    }
 	    // For debug
 	    // Show all the H2H matrices
 	    if (DEBUG_CLOCKRNN){
-	    Cpu::real_vector h2hMatrix_debug = m_h2hClockRNN;
-	    int biasPos_debug = 0;
-	    for (int i = 0; i < m_numH2Hmat; i++){
-		printf("Forward: Matrix %d\n", i);
-		for (int x_row = 0; x_row < rows; x_row++){
-		    for (int y_col = 0; y_col < rows; y_col++){
-			printf("%f ", h2hMatrix_debug[biasPos_debug + x_row + y_col*rows]);
-		    }
-		    printf("\n");
-		}
-		biasPos_debug  += h2hsize;
-	    }
-	    if (m_isBidirectional){
+		Cpu::real_vector h2hMatrix_debug = m_h2hClockRNN;
+		int biasPos_debug = 0;
 		for (int i = 0; i < m_numH2Hmat; i++){
 		    printf("Forward: Matrix %d\n", i);
 		    for (int x_row = 0; x_row < rows; x_row++){
@@ -784,16 +841,36 @@ namespace layers {
 		    }
 		    biasPos_debug  += h2hsize;
 		}
+		if (m_isBidirectional){
+		    for (int i = 0; i < m_numH2Hmat; i++){
+			printf("BackWard: Matrix %d\n", i);
+			for (int x_row = 0; x_row < rows; x_row++){
+			    for (int y_col = 0; y_col < rows; y_col++){
+				printf("%f ", h2hMatrix_debug[biasPos_debug+x_row+y_col*rows]);
+			    }
+			    printf("\n");
+			}
+			biasPos_debug  += h2hsize;
+		    }
+		}
+		// Show matrix index
+		printf("Time-MatrixIdx\n");
+		for (int t = 0; t < this->curMaxSeqLength(); t++){
+		    printf("%5d-%3d ", t, m_fw.timestepMatrices[t].h2hIdx);
+		    if (t % 10 == 9) printf("\n");
+		}
+		if (fraction.auxDataDim()>0){
+		    Cpu::bool_vector tempskipCR    = m_fw.skipCR;
+		    for (int t = 0; t < this->curMaxSeqLength(); t++){
+			printf("%d:\n", t);
+			for (int d = 0; d < rows; d++){
+			    printf("%d ", tempskipCR[t*rows + d]);
+			}
+			printf("\n");
+		    }
+		}
 	    }
-	    // Show matrix index
-	    printf("Time-MatrixIdx\n");
-	    for (int t = 0; t < this->curMaxSeqLength(); t++){
-		printf("%5d-%3d ", t, m_fw.timestepMatrices[t].h2hIdx);
-		if (t % 10 == 9) printf("\n");
-	    }
-	    }
-	}
-	
+	}	
     }
 
     template <typename TDevice>

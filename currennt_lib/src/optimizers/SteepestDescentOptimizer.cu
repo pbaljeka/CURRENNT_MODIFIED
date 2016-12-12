@@ -109,8 +109,11 @@ namespace {
     struct AdaGradAccumulate
     {
 	real_t fracLength; 
-        __host__ __device__ void operator() (const thrust::tuple<real_t&, real_t&> &t) const
+	const real_t *weightMask;
+        __host__ __device__ void operator() (const thrust::tuple<real_t&, real_t&, const int&> &t) const
         {
+	    if (weightMask && weightMask[t.get<2>()] < 1.0)
+		return;
 	    real_t aveGradient = t.get<0>() / fracLength;
 	    t.get<1>() = t.get<1>() + (aveGradient * aveGradient);
         }
@@ -119,8 +122,11 @@ namespace {
     struct AdaGradAccumulateUpdate
     {
 	real_t fracLength;
-        __host__ __device__ void operator() (const thrust::tuple<real_t&, real_t&> &t) const
+	const real_t *weightMask;
+        __host__ __device__ void operator() (const thrust::tuple<real_t&, real_t&, const int&> &t) const
         {
+	    if (weightMask && weightMask[t.get<2>()] < 1.0)
+		return;
 	    real_t aveGradient = t.get<0>() / fracLength;
 	    t.get<1>() = t.get<1>() + (aveGradient * aveGradient);
             t.get<0>() = aveGradient / sqrt(t.get<1>());
@@ -251,26 +257,38 @@ namespace optimizers {
 			// AdaGrad
 			internal::AdaGradAccumulateUpdate adaUpdateFn;
 			adaUpdateFn.fracLength = (real_t)fracLength;
+			adaUpdateFn.weightMask = (layer->flagUseWeightMask()?
+						  helpers::getRawPointer(layer->weightMask()):
+						  NULL);
 			thrust::for_each(
 			     thrust::make_zip_iterator(
 				thrust::make_tuple(this->_curWeightUpdates()[i].begin(),   
-						   this->_weightStats()[i].begin())),
+						   this->_weightStats()[i].begin(),
+						   thrust::counting_iterator<int>(0))),
 			     thrust::make_zip_iterator(
 				thrust::make_tuple(this->_curWeightUpdates()[i].end(),
-						   this->_weightStats()[i].end())),
+						   this->_weightStats()[i].end(),
+						   thrust::counting_iterator<int>(0)+
+						   m_weightDeltas.size())),
 			     adaUpdateFn
 			);
 		    }else if(this->_optOption() == OPTIMIZATION_STOCHASTIC_ADAGRAD){
 			// AdaGrad, but just accumulate the gradients
 			internal::AdaGradAccumulate adaUpdateFn;
 			adaUpdateFn.fracLength = (real_t)fracLength;
+			adaUpdateFn.weightMask = (layer->flagUseWeightMask()?
+						  helpers::getRawPointer(layer->weightMask()):
+						  NULL);
 			thrust::for_each(
 			     thrust::make_zip_iterator(
 				thrust::make_tuple(this->_curWeightUpdates()[i].begin(),   
-						   this->_weightStats()[i].begin())),
+						   this->_weightStats()[i].begin(),
+						   thrust::counting_iterator<int>(0))),
 			     thrust::make_zip_iterator(
 				thrust::make_tuple(this->_curWeightUpdates()[i].end(),
-						   this->_weightStats()[i].end())),
+						   this->_weightStats()[i].end(),
+						   thrust::counting_iterator<int>(0)+
+						   m_weightDeltas.size())),
 			     adaUpdateFn
 			);
 		    }else{

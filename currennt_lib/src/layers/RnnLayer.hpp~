@@ -93,6 +93,7 @@ namespace layers{
 	    helpers::Matrix<TDevice> h2hWrap;        // a simple wrapper for clock RNN in BP
 	    // bool_vector              skipCR;      // whether a dimension should be skippped
 	    int                      skipCRPos;      // where should I found the skipCR ?
+	    int                      h2hIdx;         //
 	    int_vector               m_crS;                // 
 	    int_vector               m_crE;                //
 	    real_t *                 unitDeltaP;

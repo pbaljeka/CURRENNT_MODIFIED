@@ -32,6 +32,11 @@
 #define PATTYPE_NORMAL 2 ///< pattern/timestep with a sequence (not first/last)
 #define PATTYPE_LAST   3 ///< last pattern/timestep in the sequence
 
+#define AUXDATATYPE_FLOAT 0 // used for the auxilliary data
+#define AUXDATATYPE_INT   1 // used for the auxilliary data
+#define AUXDATATYPE_CHAR  2 // used for the auxilliary data
+
+
 
 /*************************************************************************//**
  * The floating point type used for all computations

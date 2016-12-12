@@ -71,7 +71,7 @@ namespace layers{
 	typedef typename TDevice::real_vector real_vector;
 	typedef typename TDevice::int_vector  int_vector;
 	typedef typename TDevice::bool_vector bool_vector;
-
+	typedef typename TDevice::pattype_vector pattype_vector;
 	// Matrix wrappers of the weights
 	//  the raw data is stored as vector
 	//  wrap it up so that matrix multiplication can be launched

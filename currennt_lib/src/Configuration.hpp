@@ -140,7 +140,13 @@ private:
     /* Add 1022 for Adagrad */
     unsigned    m_optimizerOption;      // 
     real_t      m_secondLearningRate;   // in case the optimizer requires another learning rate
-
+    
+    /* Add 1111 for auxillary data */
+    std::string m_auxDataDir;          // options for the auxillary input data
+    std::string m_auxDataExt;
+    int         m_auxDataTyp;
+    int         m_auxDataDim;
+    
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
     unsigned m_maxEpochs;
@@ -611,6 +617,14 @@ public:
     const unsigned& optimizerOption() const;
     
     const real_t& optimizerSecondLR() const;
+
+    const std::string& auxillaryDataDir() const;
+    
+    const std::string& auxillaryDataExt() const;
+    
+    const int& auxillaryDataTyp() const;
+    
+    const int& auxillaryDataDim() const;
 };
 
 

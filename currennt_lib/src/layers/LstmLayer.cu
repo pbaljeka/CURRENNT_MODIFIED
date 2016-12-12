@@ -28,6 +28,7 @@
 #include "../helpers/limitedError.cuh"
 #include "../helpers/getRawPointer.cuh"
 #include "../helpers/Matrix.hpp"
+#include "../helpers/JsonClasses.hpp"
 #include "../activation_functions/Logistic.cuh"
 #include "../activation_functions/Tanh.cuh"
 
@@ -536,6 +537,23 @@ namespace layers {
         _rawNiBiasWeights     = helpers::getRawPointer(this->weights()) + 4 * ls * pls + 0 * ls;
         _rawIgBiasWeights     = helpers::getRawPointer(this->weights()) + 4 * ls * pls + 1 * ls;
         _rawFgBiasWeights     = helpers::getRawPointer(this->weights()) + 4 * ls * pls + 2 * ls;
+	
+	// Manipulate the initial value of the bias for forget
+	/*if (!(weightsSection.isValid() && 
+	      weightsSection->HasMember(this->name().c_str()))){
+	    Cpu::real_vector tmpBias(ls, 5.0);
+	    thrust::copy(this->weights().begin()+ 4 * ls * pls + 2 * ls,
+			 this->weights().begin()+ 4 * ls * pls + 3 * ls,
+			 tmpBias.begin());
+	    for (int i = 0; i<ls; i++){
+		tmpBias[i] += 5;
+	    }
+	    thrust::copy(tmpBias.begin(),
+			 tmpBias.end(),
+			 this->weights().begin()+ 4 * ls * pls + 2 * ls);
+	    printf("[ForgetBias 5]");
+	    }*/
+	
         _rawOgBiasWeights     = helpers::getRawPointer(this->weights()) + 4 * ls * pls + 3 * ls;
         _rawIgPeepholeWeights = helpers::getRawPointer(this->weights()) + 4 * ls * pls + 4 * ls + 4 * ls * ls / (m_isBidirectional ? 2 : 1) + 0 * ls;
         _rawFgPeepholeWeights = helpers::getRawPointer(this->weights()) + 4 * ls * pls + 4 * ls + 4 * ls * ls / (m_isBidirectional ? 2 : 1) + 1 * ls;
