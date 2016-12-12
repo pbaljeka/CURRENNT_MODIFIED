@@ -162,7 +162,7 @@ namespace layers {
     template <typename TDevice>
     real_t SsePostOutputLayer<TDevice>::calculateError()
     {
-    if(this->flagMseWeight())
+	if(this->flagMseWeight())
 	{
 	    internal::ComputeSseFnWeighted fn;
 	    fn.layerSize = this->size();

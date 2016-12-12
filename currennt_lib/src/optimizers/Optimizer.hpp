@@ -26,6 +26,10 @@
 #include "../NeuralNetwork.hpp"
 #include "../data_sets/DataSet.hpp"
 
+#define  OPTIMIZATION_ADAGRAD 1              //  AdaGrad
+#define  OPTIMIZATION_AVEGRAD 2              //  average the gradient per fraction of data
+#define  OPTIMIZATION_STOCHASTIC_ADAGRAD 3   //  Stochastic gradient + AdaGrad
+#define  ADAGRADFACTOR 0.000001
 
 namespace optimizers {
 
@@ -51,10 +55,12 @@ namespace optimizers {
         const int m_testEvery;
 
         bool   m_finished;
+	
 	// 0511 wang: check Nan and other;
-	bool       m_blowed;
-        int	   m_curEpoch;
-        int	   m_epochsSinceLowestError;
+	bool   m_blowed;
+        int    m_curEpoch;
+        int    m_epochsSinceLowestError;
+
         real_t m_lowestValidationError;
         real_t m_curTrainingError;
         real_t m_curValidationError;
@@ -69,31 +75,47 @@ namespace optimizers {
         real_t m_curTestErrorPerFrame;
 
 	// Add 0409 for learning_rate decay
-	bool m_flag_decay;         // whether the learning rate should be decayed
-	const int m_decayEpochNM;  // after how many sub-optimal epochs for decaying
-	int m_waitAfterDecay;      // how many epochs to wait before decay again
-
+	bool      m_flag_decay;         // whether the learning rate should be decayed
+	const int m_decayEpochNM;       // after how many sub-optimal epochs for decaying
+	int       m_waitAfterDecay;     // how many epochs to wait before decay again
+	
+	
         std::vector<real_vector> m_curWeightUpdates;
         std::vector<real_vector> m_bestWeights;
-
+	
+	// Add 1024 for AdaGrad
+	unsigned                 m_optOption;
+	std::vector<real_vector> m_weightStats;              
+	std::string              m_optStatus;
+	
     private:
         real_t _processDataSet(data_sets::DataSet &ds, bool calcWeightUpdates, real_t *classError);
-        void _storeWeights();
-        void _restoreWeights();
+        void   _storeWeights();
+        void   _restoreWeights();
 
     protected:
-        static void _exportWeights(const helpers::JsonDocument &jsonDoc, const char *arrayName, const std::vector<real_vector> &weights);
-        static void _importWeights(const helpers::JsonDocument &jsonDoc, const char *arrayName, std::vector<real_vector> *weights);
-        NeuralNetwork<TDevice>& _neuralNetwork();
-        const std::vector<real_vector>& _curWeightUpdates() const;
-        virtual void _updateWeights() =0;
+        static void _exportWeights(const helpers::JsonDocument &jsonDoc, 
+				   const char *arrayName, const std::vector<real_vector> &weights);
+        static void _importWeights(const helpers::JsonDocument &jsonDoc, 
+				   const char *arrayName, std::vector<real_vector> *weights);
+	
+        NeuralNetwork<TDevice>&   _neuralNetwork();
+        std::vector<real_vector>& _curWeightUpdates();
+	
+	// Add 16-11-02: Add fracLength, as the number of frames
+        virtual void              _updateWeights(int fracLength) =0;
 	
 	/* Add 16-02-22 Wang: for WE updating */
-	virtual void _updateWeInput() =0;
+	virtual void              _updateWeInput(int fracLength) =0;
 	
 	/* Add 04-09 for learning rate decay */
-	virtual bool _checkLRdecay();
-	virtual void _setLRdecayFalse();
+	virtual bool              _checkLRdecay();
+	virtual void              _setLRdecayFalse();
+	
+	// Add 10-24 for AdaGrad
+	const unsigned& _optOption() const;
+	std::vector<real_vector>& _weightStats();
+	
     public:
         /**
          * Constructs the optimizer
@@ -117,7 +139,8 @@ namespace optimizers {
             int maxEpochsNoBest,
             int validateEvery,
             int testEvery,
-	    int decayEpochNM
+	    int decayEpochNM,
+	    unsigned optOption
             );
 
 	bool checkLRdecay();
@@ -219,6 +242,8 @@ namespace optimizers {
 	
 	virtual void adjustLR(int decayTime) =0;
 	
+	virtual void changeLR(real_t newLR) =0;
+	
 	virtual void reinit() =0;
 	
 	void _reinit();
@@ -242,6 +267,7 @@ namespace optimizers {
 
         real_t curTestErrorPerFrame() const;
 	
+	const std::string& optStatus() const;
     };
 
 } // namespace optimizers

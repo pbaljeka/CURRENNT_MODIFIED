@@ -35,7 +35,6 @@
 #include <thrust/transform.h>
 #include <thrust/iterator/counting_iterator.h>
 
-
 namespace internal {
 namespace {
 
@@ -53,7 +52,8 @@ namespace {
         __host__ __device__ real_t operator() (const int &weightIdx)
         {
             // calculate and store the weight delta
-            real_t delta = momentum * weightDeltas[weightIdx] - learningRate * weightUpdates[weightIdx];
+            real_t delta = momentum * weightDeltas[weightIdx] - 
+		learningRate * weightUpdates[weightIdx];
             weightDeltas[weightIdx] = delta;
 
             // calculate the new weight
@@ -76,7 +76,8 @@ namespace {
         __host__ __device__ real_t operator() (const int &weightIdx)
         {
             // calculate and store the weight delta
-            real_t delta = momentum * weightDeltas[weightIdx] - learningRate * weightUpdates[weightIdx];
+            real_t delta = momentum * weightDeltas[weightIdx] - 
+		learningRate * weightUpdates[weightIdx];
             weightDeltas[weightIdx] = delta;
 
             // calculate the new weight
@@ -104,6 +105,42 @@ namespace {
             return newWeight;
         }
     };
+        
+    struct AdaGradAccumulate
+    {
+	real_t fracLength; 
+	const real_t *weightMask;
+        __host__ __device__ void operator() (const thrust::tuple<real_t&, real_t&, const int&> &t) const
+        {
+	    if (weightMask && weightMask[t.get<2>()] < 1.0)
+		return;
+	    real_t aveGradient = t.get<0>() / fracLength;
+	    t.get<1>() = t.get<1>() + (aveGradient * aveGradient);
+        }
+    };
+
+    struct AdaGradAccumulateUpdate
+    {
+	real_t fracLength;
+	const real_t *weightMask;
+        __host__ __device__ void operator() (const thrust::tuple<real_t&, real_t&, const int&> &t) const
+        {
+	    if (weightMask && weightMask[t.get<2>()] < 1.0)
+		return;
+	    real_t aveGradient = t.get<0>() / fracLength;
+	    t.get<1>() = t.get<1>() + (aveGradient * aveGradient);
+            t.get<0>() = aveGradient / sqrt(t.get<1>());
+        }
+    };
+
+    struct divideOpe { 
+	const real_t a; 
+	divideOpe(real_t _a) : a(_a) {} 
+	__host__ __device__ float operator()(const real_t& x) const 
+	{ 
+	    return x/a; 
+	} 
+    }; 
 
 } // anonymous namespace
 } // namespace internal
@@ -114,7 +151,7 @@ namespace optimizers {
     /* Add 16-02-22 Wang: for WE updating */
     // add the SGD optimizer for we
     template <typename TDevice>
-    void SteepestDescentOptimizer<TDevice>::_updateWeInput()
+    void SteepestDescentOptimizer<TDevice>::_updateWeInput(int fracLength)
     {
 	if (m_weLearningRate < 0 ){
 	    
@@ -124,12 +161,17 @@ namespace optimizers {
 	    // currently, no momentum of we updating
 	
 	    // get the input layer
-	    layers::InputLayer<TDevice> *layer = dynamic_cast<layers::InputLayer<TDevice>*>(this->_neuralNetwork().layers().front().get());
+	    layers::InputLayer<TDevice> *layer = 
+		dynamic_cast<layers::InputLayer<TDevice>*>(
+				this->_neuralNetwork().layers().front().get());
 	
-	    // because dummy error is zero, no need to know where dummy starts, just udpate using all the data
+	    // because dummy error is zero, no need to know where dummy starts, 
+	    // just udpate using all the data
+
 	    unsigned int inputSize  = layer->size();
 	    unsigned int weIDDim    = layer->_weIDDim();
 	    unsigned int weDim      = layer->_weDim();
+	    
 	    // Not using assignment here
 	    // Cpu::real_vector weBank = layer->_weBank();
 	    Cpu::real_vector weIdx  = layer->_weIdx();
@@ -142,10 +184,14 @@ namespace optimizers {
 	    for (int i=0;i<weIdx.size();i++){
 	    
 		if (weIdx[i]<0){
-		    // note: when parallel sequences was utilized, the data buffer size is like
-		    // m_parallel * m_maxLength >= m_parallel * m_curMaxLength >= sum_m_parallel(timesteps)
-		    // dummy only work for the empty slots between m_parallel*m_curMaxLength and sum_m_parallel(timesteps)
-		    // thus, we need to use weIdx to skip the empty slotes between m_parallel*m_maxLength and m_parallel*m_curMaxLength
+		    // note: when parallel sequences was utilized, 
+		    // the data buffer size is like
+		    // m_parallel * m_maxLength >= m_parallel * m_curMaxLength 
+		    //                          >= sum_m_parallel(timesteps)
+		    // dummy only work for the empty slots between 
+		    // m_parallel*m_curMaxLength and sum_m_parallel(timesteps)
+		    // thus, we need to use weIdx to skip the empty slotes 
+		    // between m_parallel*m_maxLength and m_parallel*m_curMaxLength
 		    // 
 		    continue;
 		}
@@ -168,7 +214,7 @@ namespace optimizers {
     }
 
     template <typename TDevice>
-    void SteepestDescentOptimizer<TDevice>::_updateWeights()
+    void SteepestDescentOptimizer<TDevice>::_updateWeights(int fracLength)
     {
         /* Add 16-02-22 Wang: for WE updating */
 	if (m_learningRate < 0){
@@ -176,16 +222,17 @@ namespace optimizers {
 	    
 	}else{
 	    
-	    
 	    // Add 0409 learning weight decay
-	    if (this->_checkLRdecay()){
+	    /*if (this->_checkLRdecay()){
 		m_learningRateDecay = m_learningRateDecay*m_learningRateDecayRate;
 		this->_setLRdecayFalse(); // reset the flag_decay
-	    }
-	    
-	    
+	      }
+	    */
+	   
+	    // Update the parameter
 	    internal::UpdateWeightFn_withMask updateWeightFn;
-	    internal::UpdateWeightFn updateWeightFn2;
+	    internal::UpdateWeightFn          updateWeightFn2;
+	    
 	    for (size_t i = 1; i < this->_neuralNetwork().layers().size(); ++i) {
         	layers::TrainableLayer<TDevice> *layer = 
 		    dynamic_cast<layers::TrainableLayer<TDevice>*>(
@@ -197,10 +244,63 @@ namespace optimizers {
 		if (!layer && !(mdnlayer && mdnlayer->flagTrainable()))
 		    continue;
 		
+		// Adjust the gradient (only for trainble hidden layer, not MDN layer)
+		if (this->_optOption()>0 && layer){
+		    if (this->_optOption() == OPTIMIZATION_AVEGRAD){
+			// average gradient over mini-batch
+			thrust::transform(this->_curWeightUpdates()[i].begin(),
+					  this->_curWeightUpdates()[i].end(),
+					  this->_curWeightUpdates()[i].begin(),
+					  internal::divideOpe((real_t)fracLength));
+			    
+		    }else if (this->_optOption() == OPTIMIZATION_ADAGRAD){
+			// AdaGrad
+			internal::AdaGradAccumulateUpdate adaUpdateFn;
+			adaUpdateFn.fracLength = (real_t)fracLength;
+			adaUpdateFn.weightMask = (layer->flagUseWeightMask()?
+						  helpers::getRawPointer(layer->weightMask()):
+						  NULL);
+			thrust::for_each(
+			     thrust::make_zip_iterator(
+				thrust::make_tuple(this->_curWeightUpdates()[i].begin(),   
+						   this->_weightStats()[i].begin(),
+						   thrust::counting_iterator<int>(0))),
+			     thrust::make_zip_iterator(
+				thrust::make_tuple(this->_curWeightUpdates()[i].end(),
+						   this->_weightStats()[i].end(),
+						   thrust::counting_iterator<int>(0)+
+						   m_weightDeltas.size())),
+			     adaUpdateFn
+			);
+		    }else if(this->_optOption() == OPTIMIZATION_STOCHASTIC_ADAGRAD){
+			// AdaGrad, but just accumulate the gradients
+			internal::AdaGradAccumulate adaUpdateFn;
+			adaUpdateFn.fracLength = (real_t)fracLength;
+			adaUpdateFn.weightMask = (layer->flagUseWeightMask()?
+						  helpers::getRawPointer(layer->weightMask()):
+						  NULL);
+			thrust::for_each(
+			     thrust::make_zip_iterator(
+				thrust::make_tuple(this->_curWeightUpdates()[i].begin(),   
+						   this->_weightStats()[i].begin(),
+						   thrust::counting_iterator<int>(0))),
+			     thrust::make_zip_iterator(
+				thrust::make_tuple(this->_curWeightUpdates()[i].end(),
+						   this->_weightStats()[i].end(),
+						   thrust::counting_iterator<int>(0)+
+						   m_weightDeltas.size())),
+			     adaUpdateFn
+			);
+		    }else{
+			// nothing
+		    }
+		}
+
 		// if mask is utilized
 		if (layer && layer->flagUseWeightMask()){
-		    updateWeightFn.momentum     = m_momentum;
-		    updateWeightFn.learningRate = m_learningRate*m_learningRateDecay;
+		    updateWeightFn.momentum      = m_momentum;
+		    updateWeightFn.learningRate  = m_learningRate*m_learningRateDecay;
+		    
 		    if (layer->learningRate() >= 0.0)
 			updateWeightFn.learningRate = layer->learningRate();
 
@@ -218,10 +318,12 @@ namespace optimizers {
 				      layer->weights().begin(),
 				      updateWeightFn
 				      );
+		    
 		// if mask is not used
 		}else if(layer){
-		    updateWeightFn2.momentum     = m_momentum;
-		    updateWeightFn2.learningRate = m_learningRate*m_learningRateDecay;
+		    updateWeightFn2.momentum      = m_momentum;
+		    updateWeightFn2.learningRate  = m_learningRate*m_learningRateDecay;
+		    
 		    if (layer->learningRate() >= 0.0)
 			updateWeightFn2.learningRate = layer->learningRate();
 		    
@@ -237,6 +339,7 @@ namespace optimizers {
 				    layer->weights().begin(),
 				    updateWeightFn2);
 		    
+		// trainable MDN layer
 		}else if(mdnlayer && mdnlayer->flagTrainable()){
 		    updateWeightFn2.momentum     = m_momentum;
 		    updateWeightFn2.learningRate = m_learningRate*m_learningRateDecay;
@@ -248,12 +351,21 @@ namespace optimizers {
 		    updateWeightFn2.weightUpdates = helpers::getRawPointer(
 							this->_curWeightUpdates()[i]);
 		    updateWeightFn2.weightDeltas  = helpers::getRawPointer(m_weightDeltas[i]);
-				
+		    
+		    //Cpu::real_vector temp1 = this->_curWeightUpdates()[i];
+		    //Cpu::real_vector temp2 = mdnlayer->weights();
+		    //temp1[0] = temp1[0];
+
 		    thrust::transform(
 				    thrust::counting_iterator<int>(0),
 				    thrust::counting_iterator<int>((int)mdnlayer->weights().size()),
 				    mdnlayer->weights().begin(),
 				    updateWeightFn2);
+
+		    //temp1 = this->_curWeightUpdates()[i];
+		    //temp2 = mdnlayer->weights();
+		    //temp1[0] = temp1[0];
+		    
 		}else{
 		    throw std::runtime_error("Impossible Error");
 		}
@@ -268,12 +380,12 @@ namespace optimizers {
         data_sets::DataSet &testSet, int maxEpochs, int maxEpochsNoBest, 
 	int validateEvery, int testEvery, 
         real_t learningRate, real_t momentum, real_t weLearningRate, 
-	real_t learningRateDecayRate, int decayEpochNM)
+	real_t learningRateDecayRate, int decayEpochNM, unsigned optOption)
         : Optimizer<TDevice>(neuralNetwork, trainingSet, validationSet, testSet, 
-			     maxEpochs, maxEpochsNoBest, validateEvery, testEvery, decayEpochNM)
+			     maxEpochs, maxEpochsNoBest, validateEvery, testEvery, decayEpochNM,
+			     optOption)
         , m_learningRate    (learningRate)
-        , m_learningRateFirst(learningRate)
-	, m_weLearningRate(weLearningRate)
+	, m_weLearningRate  (weLearningRate)
 	, m_learningRateDecayRate(learningRateDecayRate)
         , m_momentum        (momentum)
     {
@@ -284,6 +396,8 @@ namespace optimizers {
 	
 	// Add 0409 for decaying the learning rate
 	m_learningRateDecay = 1.0;
+
+	
     }
 
     template <typename TDevice>
@@ -296,8 +410,9 @@ namespace optimizers {
     {
         Optimizer<TDevice>::exportState(jsonDoc);
 
-        Optimizer<TDevice>::_exportWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", 
-					   m_weightDeltas);
+	if (m_momentum>0.0)
+	    Optimizer<TDevice>::_exportWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", 
+					       m_weightDeltas);
     }
 
     template <typename TDevice>
@@ -305,8 +420,9 @@ namespace optimizers {
     {
         Optimizer<TDevice>::importState(jsonDoc);
 
-        Optimizer<TDevice>::_importWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", 
-					   &m_weightDeltas);
+	if (m_momentum>0.0)
+	    Optimizer<TDevice>::_importWeights(jsonDoc, "steepest_descent_optimizer_weight_deltas", 
+					       &m_weightDeltas);
     }
 
     template <typename TDevice>
@@ -323,7 +439,13 @@ namespace optimizers {
     {
 	for(int i =0; i < decayTime; i++)
 	    m_learningRateDecay = m_learningRateDecay*0.1;
-	printf("Adjust the learning rate to %e", m_learningRate*m_learningRateDecay);
+	printf("\tAdjust the learning rate to %e", m_learningRate*m_learningRateDecay);
+    }
+    
+    template <typename TDevice>
+    void SteepestDescentOptimizer<TDevice>::changeLR(real_t newLR)
+    {
+	m_learningRate = newLR;
     }
     
     template <typename TDevice>
@@ -337,13 +459,6 @@ namespace optimizers {
 
     }
     
-
-    template <typename TDevice>
-    void SteepestDescentOptimizer<TDevice>::setLearningRateFirst(real_t learningRateFirst)
-    {
-        m_learningRateFirst = learningRateFirst;
-    }
-
 
     // explicit template instantiations
     template class SteepestDescentOptimizer<Cpu>;

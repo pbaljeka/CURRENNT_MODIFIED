@@ -79,49 +79,73 @@ private:
     std::string m_weBank;         // path to the we data
     std::string m_trainedParameter;    // path of the trained model, only model weights  will be read
     std::string m_trainedParameterCtr; // a control string to decide which layer should be read in
+    /* Add 20160902 WE noise options*/
+    int         m_weNoiseStartDim;    // noise adding, from which dimension?
+    int         m_weNoiseEndDim;      // noise adding, end at which dimension
+    real_t      m_weNoiseDev;         // noise std.
+
 
     /* Add 0401 Wang: for mse weight */
     std::string m_mseWeightPath;  // path to the mse weight file
 
     /* Add 0402 Wang: for bias of Highway gate */
-    real_t m_highwayBias;         // initial value for highway bias
+    real_t      m_highwayBias;         // initial value for highway bias
 
     /* Add 0408 Wang: to tap in the output of arbiary layer */
-    int m_outputTapLayer;         // the ID of the layer to be tapped in (start from 0)
-    bool m_outputGateOut;         // whether to get output from the gate 
+    int         m_outputTapLayer;         // the ID of the layer to be tapped in (start from 0)
+    bool        m_outputGateOut;         // whether to get output from the gate 
 
     /* Add 0409 Wang: to decay the learning rate */
-    real_t m_lr_decay_rate;
-    int m_lr_decay_epoch;
+    real_t      m_lr_decay_rate;
+    int         m_lr_decay_epoch;
     
     /* Add 0413 Wang: to mask the weight of network */
     std::string m_weightMaskPath;
     
     /* Add 0504 Wang: MDN flag vector */
     std::string m_mdnFlagPath;
-    real_t m_mdnSamplingPara;
-    int m_EMGenIter;
+    real_t      m_mdnSamplingPara;
+    int         m_EMGenIter;
 
     /* Add 0514 Wang: data mv file*/
     std::string m_datamvPath;
 
     /* Add 0526 Wang: add variance related options for MDN*/
-    real_t m_varInitPara;
-    real_t m_vFloorPara;
-    real_t m_wInitPara;
-    bool   m_tiedVariance;      // tie the variance across dimension in mixture model?
+    real_t      m_varInitPara;
+    real_t      m_vFloorPara;
+    real_t      m_wInitPara;
+    bool        m_tiedVariance;      // tie the variance across dimension in mixture model?
     
     /* Add 0620 Wang: add LstmCharW*/
     std::string m_chaBankPath;    // path to the binary data of txt character bank
-    unsigned m_chaDimLstmCharW;   // the size of the txt character bag
+    unsigned    m_chaDimLstmCharW;   // the size of the txt character bag
     
     /* Add 0602 Other options */
     std::string m_printWeightPath;
-    std::string m_mdnVarScaleGen;    // the vector to scale each dimension of the output
-    std::string m_mdnDyn;            // whether incorporate dynamic feature
+    std::string m_mdnVarScaleGen;       // the vector to scale each dimension of the output
+    std::string m_mdnDyn;               // whether incorporate dynamic feature
+    int         m_arrmdnLearning;       // an option for the learning rate of arrmdn
+    std::string m_tanhAutoregressive;   // whether use the tanh-based function
+    int         m_setDynFilterZero;     // 
+    real_t      m_ARRMDNInitVar;        // the variance of Gaussian dis for initializing AR
+    int         m_ARRMDNUpdateInterval; // after how many epochs update the n+1 order AR ? 
     
-    int      m_tanhAutoregressive;   //
-    int      m_setDynFilterZero;     // 
+    /* Add 1009 ClockRNN */
+    std::string m_clockRNNTimeRes;      // option for the ClockRNN
+    
+    /* Add 1012 KLD output*/
+    int         m_KLDOutputDataType;    // 
+    real_t      m_lrFactor;             // learning rate factor
+    
+    /* Add 1022 for Adagrad */
+    unsigned    m_optimizerOption;      // 
+    real_t      m_secondLearningRate;   // in case the optimizer requires another learning rate
+    
+    /* Add 1111 for auxillary data */
+    std::string m_auxDataDir;          // options for the auxillary input data
+    std::string m_auxDataExt;
+    int         m_auxDataTyp;
+    int         m_auxDataDim;
     
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
@@ -518,6 +542,12 @@ public:
 
     const std::string& weBankPath() const;
     
+    const int&          weNoiseStartDim() const;
+
+    const int&          weNoiseEndDim() const;      // noise adding, end at which dimension
+
+    const real_t&       weNoiseDev() const;         // noise std.
+
     const std::string& mseWeightPath() const;
 
     const std::string& weightMaskPath() const;
@@ -568,9 +598,33 @@ public:
 
     const std::string& mdnDyn() const;
 
-    const int& tanhAutoregressive() const;
+    const std::string& tanhAutoregressive() const;
 
     const int& zeroFilter() const;
+    
+    const int& arrmdnLearning() const;
+
+    const real_t& arRMDNInitVar() const;
+
+    const int& arRMDNUpdateInterval() const;
+    
+    const std::string& clockRNNTimeRes() const;
+
+    const int& KLDOutputDataType() const;
+
+    const real_t& lrFactor() const;
+
+    const unsigned& optimizerOption() const;
+    
+    const real_t& optimizerSecondLR() const;
+
+    const std::string& auxillaryDataDir() const;
+    
+    const std::string& auxillaryDataExt() const;
+    
+    const int& auxillaryDataTyp() const;
+    
+    const int& auxillaryDataDim() const;
 };
 
 

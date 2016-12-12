@@ -56,8 +56,14 @@ namespace data_sets {
             std::streampos targetsBegin;
 	    
 	    // Add 0620, Wang: support to the txt int data
-	    int         txtLength;        // length of the txt data for this sequence
-	    std::streampos txtDataBegin;  // 
+	    int            txtLength;        // length of the txt data for this sequence
+	    std::streampos txtDataBegin;     //  
+
+	    // Add 1111, support to the auxillary data
+	    int            auxDataDim;
+	    int            auxDataTyp;
+	    std::streampos auxDataBegin;
+	    
         };
 
     private:
@@ -65,14 +71,19 @@ namespace data_sets {
         void _shuffleSequences();
         void _shuffleFractions();
         void _addNoise(Cpu::real_vector *v);
-        Cpu::real_vector _loadInputsFromCache(const sequence_t &seq);
-        Cpu::real_vector _loadOutputsFromCache(const sequence_t &seq);
-        Cpu::int_vector _loadTargetClassesFromCache(const sequence_t &seq);
+        Cpu::real_vector    _loadInputsFromCache(const sequence_t &seq);
+        Cpu::real_vector    _loadOutputsFromCache(const sequence_t &seq);
+        Cpu::int_vector     _loadTargetClassesFromCache(const sequence_t &seq);
         boost::shared_ptr<DataSetFraction> _makeFractionTask(int firstSeqIdx);
         boost::shared_ptr<DataSetFraction> _makeFirstFractionTask();
 	
 	// Add 0620: Wang support to the txt input data
 	Cpu::real_vector _loadTxtDataFromCache(const sequence_t &seq);
+	
+	// Add 1111: support to read auxillary data
+	Cpu::real_vector    _loadAuxRealDataFromCache(const sequence_t &seq);
+	Cpu::pattype_vector _loadAuxPattypeDataFromCache(const sequence_t &seq);
+	Cpu::int_vector     _loadAuxIntDataFromCache(const sequence_t &seq);
 	
     private:
         bool   m_fractionShuffling;
@@ -99,11 +110,19 @@ namespace data_sets {
         int    m_curFirstSeqIdx;
 	
 	// Add 0620: Wang support to the txt input data
+	// (Support for the txt data should be merged with the auxillary data)
 	int    m_maxTxtLength;                 // the maximum length of txt over corpus
 	int    m_txtDataPatternSize;           // dimension of the txt data 
 	int    m_totalTxtLength;               // the total length of txt data for this fraction
 	bool   m_hasTxtData;                   // whether contains the txt data?
 	
+	// Ada 1111: Support to the auxillary data (external data not in .nc format)
+	std::string m_auxDirPath;              // path to the directory where auxillary data exist
+	std::string m_auxFileExt;              // extension of the auxillary data type
+	int         m_auxDataTyp;              // the binary data type of the auxillary data
+	int         m_auxDataDim;              // dimension of the auxillary data
+	
+
     public:
         /**
          * Creates an empty data set
@@ -120,10 +139,15 @@ namespace data_sets {
          * @param seqShuf  Apply sequence shuffling
          * @param noiseDev Static noise deviation
          */
-        DataSet(const std::vector<std::string> &ncfiles, int parSeq, real_t fraction=1, 
-            int truncSeqLength=0,
-            bool fracShuf=false, bool seqShuf=false, real_t noiseDev=0,
-            std::string cachePath = "");
+        DataSet(const std::vector<std::string> &ncfiles, 
+		int    parSeq,  
+		real_t fraction       = 1, 
+		int    truncSeqLength = 0,
+		bool   fracShuf       = false, 
+		bool   seqShuf        = false, 
+		real_t noiseDev       = 0,
+		std::string cachePath = ""
+		);
 
         /**
          * Destructor

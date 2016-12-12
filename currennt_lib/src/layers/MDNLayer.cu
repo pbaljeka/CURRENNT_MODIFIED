@@ -53,6 +53,8 @@
 #include <boost/random/normal_distribution.hpp>
 #include <boost/random/uniform_real_distribution.hpp>
 #include <boost/random/mersenne_twister.hpp>
+#include <boost/algorithm/string.hpp>
+#include <boost/lexical_cast.hpp>
 
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
@@ -63,6 +65,8 @@
 #include <fstream>
 #include <cmath>
 
+
+#define MIXTUREDYN_INITVARIANCE 0.01
 
 namespace layers {
     
@@ -96,11 +100,14 @@ namespace layers {
 	Cpu::int_vector flagTieVariance;
 	Cpu::int_vector flagTrainable;
 	Cpu::int_vector flagTrainable_arg;
+	Cpu::int_vector optTanhAutoReg;
+	Cpu::int_vector optTanhAutoReg_arg;
 	flagTieVariance.clear();
 	flagTrainable.clear();
+	optTanhAutoReg.clear();
 	
 	/******************* Read config ********************/
-	// read in the configuration
+	// read in the configuration from .autosave 
 	if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())) {
 	    const rapidjson::Value &weightsChild = (*weightsSection)[this->name().c_str()];
             if (!weightsChild.IsObject())
@@ -135,28 +142,40 @@ namespace layers {
 		     it != BuftieVarianceFlag.End(); ++it)
 		    flagTrainable.push_back(static_cast<int>(it->GetInt()));
 	    }
+	    
+	    // read in the trainable type vector
+	    if (weightsChild.HasMember("tanhAutoReg") && 
+		weightsChild["tanhAutoReg"].IsArray()){
+		const rapidjson::Value &BuftieVarianceFlag = weightsChild["tanhAutoReg"];
+		for (rapidjson::Value::ConstValueIterator it = BuftieVarianceFlag.Begin(); 
+		     it != BuftieVarianceFlag.End(); ++it)
+		    optTanhAutoReg.push_back(static_cast<int>(it->GetInt()));
+	    }
 
+	// read in the configuration from mdn_config (binary file)
         }else{
 	    std::ifstream ifs(config.mdnFlagPath().c_str(), 
 			      std::ifstream::binary | std::ifstream::in);
-	    if (!ifs.good()){
-		throw std::runtime_error(std::string("Fail to open MDNConfig: " + 
-						     config.mdnFlagPath()));
-	    }
+	    if (!ifs.good())
+		throw std::runtime_error(std::string("Can't open MDNConfig:"+config.mdnFlagPath()));
+	    
 	    std::streampos numEleS, numEleE;
 	    numEleS = ifs.tellg();
 	    ifs.seekg(0, std::ios::end);
 	    numEleE = ifs.tellg();
+	    // get the total number of parameter
 	    long int tmpnumEle  = (numEleE-numEleS)/sizeof(real_t);
 	    ifs.seekg(0, std::ios::beg);
 	
+	    // get the total number of MDNUnit
 	    real_t tempVal;
-	    ifs.read((char *)&tempVal, sizeof(real_t)); //
-	    numEle = (long int)tempVal;                 // get the total number of parameter
-	    
+	    ifs.read((char *)&tempVal, sizeof(real_t));
+	    numEle = (int)tempVal;                      
 	    if (tmpnumEle != (numEle*5+1)){
-		throw std::runtime_error("Invalid MDN config file.");
+		throw std::runtime_error("Number of parameter != 1st parameter * 5 + 1");
 	    }	    
+
+	    // get the configuration for each MDNUnit
 	    m_mdnConfigVec.resize(1+numEle*5, 0.0);
 	    m_mdnConfigVec[0] = (real_t)numEle;
 	    for (int i=0; i<numEle; i++){
@@ -184,38 +203,69 @@ namespace layers {
 	    throw std::runtime_error("Error in tieVarianceFlag and trainableFlag (in model file)");
 	}
 
+	
 	// read Trainable from input argument
 	if (config.mdnDyn().size() > 0){
 	    if (config.mdnDyn().size() != numEle){
-		printf("mdnDyn length: %d, MDNUnits %d\n", config.mdnDyn().size(), numEle);
-		throw std::runtime_error("Error in mdnDyn");
+		// num1_num2_num3 format
+		std::vector<std::string> tempArgs;
+		boost::split(tempArgs, config.mdnDyn(), boost::is_any_of("_"));
+		if (tempArgs.size() != numEle){
+		    printf("mdnDyn length: %d, MDNUnits %d\n", 
+			   (int)tempArgs.size(), (int)numEle);
+		    throw std::runtime_error("Error in mdnDyn");
+		}
+		flagTrainable_arg.resize(config.mdnDyn().size(), 0);
+		for (int i=0; i < tempArgs.size(); i++)
+		    flagTrainable_arg[i] = boost::lexical_cast<int>(tempArgs[i]);
+		
+	    }else{
+		flagTrainable_arg.resize(config.mdnDyn().size(), 0);
+		for (int i=0; i < config.mdnDyn().size(); i++)
+		    flagTrainable_arg[i] = config.mdnDyn()[i] - '0';
 	    }
-	    flagTrainable_arg.resize(config.mdnDyn().size(), 0);
-	    for (int i=0; i < config.mdnDyn().size(); i++)
-		flagTrainable_arg[i] = config.mdnDyn()[i] - '0';
 	}else{
-	    // default, make it all false
+	    // default, make it all nontrainable unit
 	    flagTrainable_arg.resize(numEle, 0);
 	}
 
+	// read Trainable from input argument
+	if (config.mdnDyn().size() > 0 && config.tanhAutoregressive().size() > 0){
+	    optTanhAutoReg_arg.resize(config.mdnDyn().size(), 0);
+	    if (config.tanhAutoregressive().size() != numEle){
+		for (int i=0; i < config.tanhAutoregressive().size(); i++)
+		    optTanhAutoReg_arg[i] = config.tanhAutoregressive()[0] - '0';
+	    }else{
+		for (int i=0; i < config.tanhAutoregressive().size(); i++)
+		    optTanhAutoReg_arg[i] = config.tanhAutoregressive()[i] - '0';
+	    }
+	}else{
+	    // default, make it all nontrainable unit
+	    optTanhAutoReg_arg.resize(numEle, 0);
+	}
 
-	
+
+	printf("\n");	
 	int weightsNum = 0;
 	this->m_trainable = false;
-	printf("\n");
+
+	// create the MDNUnits
 	for (int i=0; i<numEle; i++){
-	    unitS = (int)m_mdnConfigVec[1+i*5];
-	    unitE = (int)m_mdnConfigVec[2+i*5];
-	    unitSOut = (int)m_mdnConfigVec[3+i*5];
-	    unitEOut = (int)m_mdnConfigVec[4+i*5];
-	    mdnType  = (int)m_mdnConfigVec[5+i*5];
+	    unitS    = (int)m_mdnConfigVec[1+i*5];  // start dimension in output of previous layer
+	    unitE    = (int)m_mdnConfigVec[2+i*5];  // end dimension in output of previous layer
+	    unitSOut = (int)m_mdnConfigVec[3+i*5];  // start dimension in output feature
+	    unitEOut = (int)m_mdnConfigVec[4+i*5];  // end dimension in output feature
+	    mdnType  = (int)m_mdnConfigVec[5+i*5];  // MDNUnit type
 	    
+	    // binomial distribution (parametrized as sigmoid function)
 	    if (mdnType==MDN_TYPE_SIGMOID){
 		mdnUnit = new MDNUnit_sigmoid<TDevice>(unitS, unitE, unitSOut, unitEOut, mdnType, 
 						       precedingLayer, this->size());
 		m_mdnParaDim += (unitE - unitS);
 		outputSize += (unitE - unitS);
 		printf("MDN sigmoid\n");
+		
+	    // multi-nomial distribution (parameterized by softmax function)
 	    }else if(mdnType==MDN_TYPE_SOFTMAX){
 		mdnUnit = new MDNUnit_softmax<TDevice>(unitS, unitE, unitSOut, unitEOut, mdnType, 
 						       precedingLayer, this->size());
@@ -223,7 +273,9 @@ namespace layers {
 		outputSize += 1;
 		printf("MDN softmax\n");
 
+	    // Gaussian mixture distribution
 	    }else if(mdnType > 0){
+		
 		// the MDNUnit mixture dynamic unit (either specified by --mdnDyn or model option)
 		// if the model (.autosave) has specified it, ignores the arguments
 		bool tmpTieVarianceFlag = ((flagTieVariance.size()>0) ?
@@ -236,14 +288,28 @@ namespace layers {
 					   (flagTrainable[i])       :
 					   (flagTrainable_arg[i]));
 		
-		printf("MDN mixture: trainable: %d, tieVariance %d, #parameter ", 
+		// tanhAutoReg type
+		int  tmpTanhAutoReg     = ((optTanhAutoReg.size()>0) ? 
+					   (optTanhAutoReg[i])       :
+					   (optTanhAutoReg_arg[i]));
+		
+		printf("MDN mixture: trainable: %2d, tieVariance %d, #parameter ", 
 		       tmpTrainableFlag, tmpTieVarianceFlag);
 		int featureDim;   
 		int thisWeightNum; 
 
 		switch (tmpTrainableFlag)
-		    {
-			
+		{	
+		    // Due to historical reason, the coding here is quite complex
+		    // the original scheme
+		    // 0 : non-trainable mixture
+		    // 1 : 1st AR, time axis
+		    // 2 : dynamic AR, parameter predicted by network
+		    // 3 : 2st AR, time axis
+		    // 4-5: 1-2 AR, dimension axis
+		    // 6-7: 1-2 AR, dimension and time axis
+		    // else: AR, time axis
+		    
 		    // trainable unit with dynamic link (weight predicted by the network)
 		    case MDNUNIT_TYPE_2:
 			mdnUnit = new MDNUnit_mixture_dynSqr<TDevice>(
@@ -267,26 +333,48 @@ namespace layers {
 		    default:
 			int dynDirection;
 			int lookBackStep;
+			
 			if (tmpTrainableFlag < 0){
 			    printf("The value in --mdnDyn can only be [0-9]");
 			    throw std::runtime_error("Error configuration --mdnDyn");
 			}else if (tmpTrainableFlag <= 3){
 			    // AR along the time axis
 			    dynDirection = MDNUNIT_TYPE_1_DIRECT;
+			    // tmpTrainableFlag = 1 or 2
 			    lookBackStep = (tmpTrainableFlag==1)?(1):(tmpTrainableFlag-1);
-			    
 			}else if (tmpTrainableFlag <= 5){
 			    // AR along the dimension axis
 			    dynDirection = MDNUNIT_TYPE_1_DIRECD;
 			    lookBackStep = tmpTrainableFlag - 3;
-			}else{
+			}else if (tmpTrainableFlag <= 7){
 			    // AR long both time and dimension axes
 			    dynDirection = MDNUNIT_TYPE_1_DIRECB;
 			    lookBackStep = tmpTrainableFlag - 5;
+			}else{
+			    // AR along the time axis
+			    dynDirection = MDNUNIT_TYPE_1_DIRECT;
+			    lookBackStep = tmpTrainableFlag - 5;
+			}
+			
+			bool realPole = true;
+			// for casecade of complex filters
+			if (tmpTanhAutoReg==MDNARRMDN_CASECADECOMPLEX){
+			    if (lookBackStep < 2){
+				throw std::runtime_error("AR complex poles requires AR order > 1");
+			    }else if ((lookBackStep % 2) == 1){
+				// if the order is an odd number
+				// there must be a real pole (1-\alphaz^-1)
+				// let's make it as (1 - \alphaz^-1 - 0z^-2)
+				lookBackStep = lookBackStep + 1;
+				// there is one real pole in the AR
+				realPole     = true; 
+			    }else{
+				// there is no real pole
+				realPole     = false;
+			    }
 			}
 			
 			// create the trainable unit
-		        // case MDNUNIT_TYPE_1:	
 			featureDim    = unitEOut - unitSOut;
 			thisWeightNum = layers::MixtureDynWeightNum(featureDim, 
 								    mdnType, 
@@ -296,17 +384,26 @@ namespace layers {
 					unitS, unitE, unitSOut, unitEOut, mdnType, 
 					precedingLayer, this->size(), 
 					tmpTieVarianceFlag, weightsNum, thisWeightNum,
-					lookBackStep, tmpTrainableFlag, dynDirection);
+					lookBackStep, tmpTrainableFlag, dynDirection, realPole,
+					tmpTanhAutoReg);
+			
 			weightsNum += thisWeightNum;
+			
 			this->m_trainable = true;
-			printf("%d\n", thisWeightNum);
+			
+			printf("%-8d, AR order and direction: %d %d", 
+			       thisWeightNum, lookBackStep, dynDirection);
+			
+			if (tmpTanhAutoReg){
+			    printf(", with tanh-based model type %d", tmpTanhAutoReg);
+			}
+			printf("\n");
 			break;
-		    }
-		
+		}
 		m_mdnParaDim += (unitE - unitS);
-
+		
+		// with dynamic link (time-variant AR)
 		if (tmpTrainableFlag == MDNUNIT_TYPE_2){
-		    // with dynamic link
 		    if (tmpTieVarianceFlag){
 			// K mixture weight, K*Dim mean, K*1 variance, Dim a, Dim b
 			outputSize += ((unitE - unitS)-2*mdnType-3*(unitEOut - unitSOut))/mdnType;
@@ -334,7 +431,7 @@ namespace layers {
 	}
 
 	/********************  check               ****************/
-	printf("MDN layer parameter number: %d\n", m_mdnParaDim);
+	printf("MDN layer distribution parameter number: %d\n", m_mdnParaDim);
 	if (m_mdnParaDim != precedingLayer.size()){
 	    printf("MDN parameter dim %d is not equal to NN output dimension %d\n", 
 		   m_mdnParaDim, precedingLayer.size());
@@ -400,9 +497,27 @@ namespace layers {
 		
 	    }else {
 		// No other initialization methods implemented yet
+		// Add 0923, we need random initialization here
+		// The problem is that, for high order filter, we need to break the symmetry of
+		// of the parameter
 		weights.resize(weightsNum, 0.0);	
+		if(config.arRMDNInitVar() > 0.0){
+		    static boost::mt19937 *gen = NULL;
+		    if (!gen) {
+			gen = new boost::mt19937;
+			gen->seed(config.randomSeed()+101);
+		    }
+		    boost::random::normal_distribution<real_t> dist(0.0, config.arRMDNInitVar());
+		    for (size_t i = 0; i < weights.size(); ++i)
+			weights[i] = dist(*gen);
+		    printf("\nARRMDN para initialized as Gaussian noise (var: %f)", 
+			   config.arRMDNInitVar());
+		}else{
+		    printf("\nARRMDN initialized as zero");
+		}
 	    }
-	    printf("\nMDN trainable mixture is used. The number of parameter is %d\n", weightsNum);
+	    printf("\nMDN trainable mixture is used."); 
+	    printf("The number of trainable parameter is %d\n", weightsNum);
 	    m_sharedWeights       = weights;
 	    m_sharedWeightUpdates = weights;
 	    
@@ -523,13 +638,17 @@ namespace layers {
 	tieVariance.Reserve(mdnUnitCounts, allocator);
 	rapidjson::Value trainableType(rapidjson::kArrayType);
 	trainableType.Reserve(mdnUnitCounts, allocator);
+	rapidjson::Value tanhRegAutoType(rapidjson::kArrayType);
+	tanhRegAutoType.Reserve(mdnUnitCounts, allocator);
 
 	BOOST_FOREACH (const boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
 	    tieVariance.PushBack((int)mdnUnit->flagVariance(), allocator);
 	    trainableType.PushBack(mdnUnit->flagTrainable(), allocator);
+	    tanhRegAutoType.PushBack((int)mdnUnit->tanhRegType(), allocator);
 	}
 	weightsSection.AddMember("tieVarianceFlag",  tieVariance, allocator);
 	weightsSection.AddMember("trainableFlag",  trainableType, allocator);
+	weightsSection.AddMember("tanhAutoReg",  tanhRegAutoType, allocator);
 	
 	// add the weights section to the weights object
 	weightsObject->AddMember(this->name().c_str(), weightsSection, allocator);
@@ -546,7 +665,8 @@ namespace layers {
     }
 
     template <typename TDevice>
-    void MDNLayer<TDevice>::reReadWeight(const helpers::JsonValue &weightsSection)
+    void MDNLayer<TDevice>::reReadWeight(const helpers::JsonValue &weightsSection, 
+					 const int readCtrFlag)
     {
 	Cpu::real_vector weights;
 	if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())){
@@ -691,6 +811,21 @@ namespace layers {
     bool MDNLayer<TDevice>::flagTrainable() const
     {
 	return m_trainable;
+    }
+    
+    template <typename TDevice>
+    void MDNLayer<TDevice>::setCurrTrainingEpoch(const int curTrainingEpoch)
+    {
+	Layer<TDevice>::setCurrTrainingEpoch(curTrainingEpoch);
+	BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
+	    mdnUnit->setCurrTrainingEpoch(curTrainingEpoch);
+	}
+    }
+    
+    template <typename TDevice>
+    int& MDNLayer<TDevice>::getCurrTrainingEpoch()
+    {
+	return Layer<TDevice>::getCurrTrainingEpoch();
     }
 
     template class MDNLayer<Cpu>;

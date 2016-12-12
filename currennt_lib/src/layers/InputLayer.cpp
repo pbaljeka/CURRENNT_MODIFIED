@@ -21,11 +21,58 @@
  *****************************************************************************/
 
 #include "InputLayer.hpp"
+#include "../Configuration.hpp"
+
+#include <boost/random/normal_distribution.hpp>
+#include <boost/random/uniform_real_distribution.hpp>
+#include <boost/random/mersenne_twister.hpp>
 
 #include <boost/lexical_cast.hpp>
+#include <thrust/transform.h>
 #include <stdexcept>
-
 #include <fstream>
+
+#include "../helpers/getRawPointer.cuh"
+#include <thrust/transform_reduce.h>
+#include <thrust/functional.h>
+#include <thrust/sequence.h>
+#include <thrust/for_each.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/execution_policy.h>
+
+namespace internal {
+namespace {
+
+    struct ReadInput
+    {
+	const real_t *sourceW;
+	real_t *targetW;
+	real_t *weBank;
+	int sourceDim;     // 
+	int targetDim;     //
+	int weDim;         //
+	int weIdxDim;      // sourceDim - 1
+
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    int dim  = (idx % targetDim);
+	    int time = (idx / targetDim);
+	    
+	    int sourcePos;
+	    if (dim >= weIdxDim){
+		sourcePos = time * sourceDim + weIdxDim;
+		int whicWe = (int)(*(sourceW + sourcePos));
+		sourcePos = whicWe * weDim + (dim - sourceDim + 1);
+		*(targetW + idx) = *(weBank  + sourcePos);
+	    }else{
+		sourcePos = time * sourceDim + dim;
+		*(targetW + idx) = *(sourceW + sourcePos);
+	    }
+	}
+    };
+}
+}
+
 
 namespace layers {
 
@@ -35,6 +82,7 @@ namespace layers {
 	, m_weDim(-1)
 	, m_flagWeUpdate(false)
     {
+	m_weBufferInput.resize(parallelSequences*maxSeqLength*this->size(), 0.0);
     }
 
     template <typename TDevice>
@@ -54,10 +102,10 @@ namespace layers {
     {
 	if (m_flagWeUpdate){
 	    if (m_weIDDim > fraction.inputPatternSize()){
-		throw std::runtime_error("we dimension is larger than input data dimension");
+		throw std::runtime_error("WE dimension is larger than input data dimension");
 	    }
 	    if (this->size() != fraction.inputPatternSize()-1+m_weDim){
-		throw std::runtime_error("input data pattern -1 + weDim != networkinput");
+		throw std::runtime_error("Input's dimension -1 + weDim != input layer size");
 	    }
 	}else if (fraction.inputPatternSize() != this->size()) {
             throw std::runtime_error(std::string("Input layer size of ") + 
@@ -82,13 +130,40 @@ namespace layers {
 		throw std::runtime_error("m_weIdx size is smaller than fracTime\n");
 	    }
 	    thrust::fill(m_weIdx.begin(), m_weIdx.end(), -1);
+	    
+	    /* Code based on Thrust parallel */
+	    /*{{
+		internal::ReadInput fn;
+		fn.sourceW   = helpers::getRawPointer(fraction.inputs());
+		fn.targetW   = helpers::getRawPointer(m_weBufferInput);
+		fn.weBank    = helpers::getRawPointer(m_weBank);
+		fn.sourceDim = fraction.inputs().size()/fracTime;
+		fn.targetDim = this->size();
+		fn.weDim     = m_weDim;
+		fn.weIdxDim  = m_weIDDim;
+		
+		int n = fracTime * this->size();
+		thrust::for_each(thrust::host, 
+				 thrust::counting_iterator<int> (0),
+				 thrust::counting_iterator<int> (0)+n,
+				 fn);
+		
+		thrust::copy(m_weBufferInput.begin(),
+			     m_weBufferInput.begin()+n,
+			     this->_outputs().begin());
+	    }}*/
+	    
+
+	    //Code based on CPU sequential method
+	    Cpu::real_vector tempInput;
+	    tempInput.resize(this->size(), 0.0);
 	    for (int i=0; i<fracTime; i++){
 		bias = i*fraction.inputPatternSize();
 		
 		// copy the original input data
 		thrust::copy(fraction.inputs().begin()+bias, 
 			     fraction.inputs().begin()+bias+fraction.inputPatternSize(), 
-			     this->_outputs().begin()+i*this->size());
+			     tempInput.begin());
 		
 		// retrieve the embedded vector idx and save m_weIdx
 		weidx = (long unsigned int)(fraction.inputs()[i * fraction.inputPatternSize() + 
@@ -101,19 +176,47 @@ namespace layers {
 		m_weIdx[i]=weidx;
 		
 		// copy the we data into the input data (output of the InputLayer)
-		thrust::copy(m_weBank.begin() + weidx     * m_weDim, 
-			     m_weBank.begin() + (weidx+1) * m_weDim, 
-			     this->_outputs().begin() + i * this->size() + 
+		thrust::copy(m_weBank.begin()  + weidx     * m_weDim, 
+			     m_weBank.begin()  + (weidx+1) * m_weDim, 
+			     tempInput.begin() +  
 			     fraction.inputPatternSize()  - 1);
+		
+		// Add 0902: add noise to the input
+		// Note: this is different from the input_noise_sigma
+		//       here, the noise will be added every epoch
+		if (this->m_weNoiseStartDim > 0){		    
+		    if (this->m_weNoiseStartDim >= this->size() ||
+			this->m_weNoiseEndDim   >  this->size()){
+			throw std::runtime_error("weNoiseDimenion error");
+		    }
+		    const Configuration &config = Configuration::instance();	    
+		    static boost::mt19937 *gen = NULL;
+		    if (!gen) {
+			gen = new boost::mt19937;
+			gen->seed(config.randomSeed()+100);
+		    }
+		    boost::random::normal_distribution<real_t> dist(0.0, this->m_weNoiseDev);
+		    for (size_t j = this->m_weNoiseStartDim; j < this->m_weNoiseEndDim; ++j)
+			tempInput[j] += dist(*gen);;
+		}
+
+		// copy the we data into the input data (output of the InputLayer)
+		thrust::copy(tempInput.begin(), tempInput.end(),
+			     this->_outputs().begin()+i*this->size());
+		
 	    }
+	    
 	    // for debugging
 	    if (0){
 		Cpu::real_vector tempVec(this->_outputs());
 		std::cout << tempVec.size() << std::endl;
 	    }
+
 	}else
 	    // if no we is utilized, just copy the input
-	    thrust::copy(fraction.inputs().begin(),fraction.inputs().end(),this->_outputs().begin());
+	    thrust::copy(fraction.inputs().begin(),
+			 fraction.inputs().end(),
+			 this->_outputs().begin());
     }
 
     template <typename TDevice>
@@ -194,6 +297,7 @@ namespace layers {
 	// to store the word vector sequences for each frame
 	m_weIdx    = Cpu::real_vector(maxLength, -1);
 	ifs.close();
+
 	return true;
     }
     
@@ -230,7 +334,28 @@ namespace layers {
     {
 	// nothing to be done here
     }
-
+    
+    template <typename TDevice>
+    bool InputLayer<TDevice>::initWeNoiseOpt(const int weNoiseStartDim, const int weNoiseEndDim,
+					     const real_t weNoiseDev)
+    {
+	this->m_weNoiseStartDim = weNoiseStartDim;
+	this->m_weNoiseEndDim   = weNoiseEndDim;
+	this->m_weNoiseDev      = weNoiseDev;
+	if (this->m_weNoiseStartDim > this->m_weNoiseEndDim){
+	    printf("Error: this->m_weNoiseStartDim > this->m_weNoiseEndDim\n");
+	    return false;
+	}
+	if (this->m_weNoiseDev < 0.0){
+	    printf("Error: this->m_weNoiseDev < 0.0 \n");
+	    return false;
+	}
+	if (this->m_weNoiseStartDim > 0){
+	    printf("WE noise: from %d to %d, %f\n", weNoiseStartDim, weNoiseEndDim, weNoiseDev);
+	}
+	return true;
+    }
+    
     // explicit template instantiations
     template class InputLayer<Cpu>;
     template class InputLayer<Gpu>;

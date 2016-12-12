@@ -52,7 +52,13 @@ namespace layers {
     {
 	return m_outputMseWeights;
     }
-
+    
+    template <typename TDevice>
+    typename PostOutputLayer<TDevice>::real_vector& PostOutputLayer<TDevice>::_mvVector()
+    {
+	return m_targetDataMV;
+    }
+    
     template <typename TDevice>
     PostOutputLayer<TDevice>::PostOutputLayer(
         const helpers::JsonValue &layerChild, 
@@ -105,7 +111,22 @@ namespace layers {
     {
 	return this->m_flagMseWeight;
     }
+    
+    /* Add 1012 read the mean and variance vector */
+    template <typename TDevice>
+    bool PostOutputLayer<TDevice>::readMV(const PostOutputLayer<TDevice>::cpu_real_vector &mVec, 
+					  const PostOutputLayer<TDevice>::cpu_real_vector &vVec)
+    {
+	if (mVec.size() != this->size() || vVec.size() != this->size()){
+	    throw std::runtime_error(std::string("Unmatched number of dimension of mean and var"));
+	}
+	Cpu::real_vector tmpVec(this->size()*2, 0.0);
+	thrust::copy(mVec.begin(), mVec.end(), tmpVec.begin());
+	thrust::copy(vVec.begin(), vVec.end(), tmpVec.begin()+this->size());
+	m_targetDataMV = tmpVec;
+    }
 
+    
     // initialize the weight for Mse calculation
     template <typename TDevice>
     bool PostOutputLayer<TDevice>::readMseWeight(const std::string mseWeightPath)
@@ -126,7 +147,7 @@ namespace layers {
 	ifs.seekg(0, std::ios::beg);
 	
 	if (numEle != this->size()){
-	    printf("MSE weight vector length incompatible: %d %d", numEle, this->size());
+	    printf("MSE weight vector length incompatible: %d %d", (int)numEle, (int)this->size());
 	    throw std::runtime_error("Error in MSE weight configuration");
 	}
 	

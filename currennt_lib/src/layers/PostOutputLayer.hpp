@@ -38,7 +38,7 @@ namespace layers {
     class PostOutputLayer : public Layer<TDevice>
     {
         typedef typename TDevice::real_vector real_vector;
-
+	typedef typename Cpu::real_vector cpu_real_vector;
     private:
         Layer<TDevice> &m_precedingLayer;
 	
@@ -46,14 +46,20 @@ namespace layers {
 	real_vector m_outputMseWeights;  // vector for MSE output weights
 	bool        m_flagMseWeight;     // whether to use m_flagMseWeight
 	
+	/* Add 1012 for mean and variance vector */
+	real_vector m_targetDataMV;      // [mean, variance]
+	
     protected:
         real_vector& _targets();
         real_vector& _actualOutputs();
         real_vector& _outputErrors();
 	
-	/* Add 16-04-01 for weighted MSE */
+	/* Add 0401 for weighted MSE */
 	real_vector& _mseWeight();
-
+	
+	/* Add 1012 for */
+	real_vector& _mvVector();
+	
     public:
         /**
          * Constructs the Layer
@@ -73,6 +79,9 @@ namespace layers {
 	bool readMseWeight(const std::string mseWeightPath);
 	bool flagMseWeight();
 	
+	/* Add 1012 for read mean and variance vector */
+	bool readMV(const cpu_real_vector &mVec, const cpu_real_vector &vVec);
+
         /**
          * Destructs the Layer
          */

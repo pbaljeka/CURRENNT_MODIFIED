@@ -121,7 +121,7 @@ namespace layers {
 	
 
 	/* Trainable Part */
-	virtual void reReadWeight(const helpers::JsonValue &weightsSection);
+	virtual void reReadWeight(const helpers::JsonValue &weightsSection, const int readCtrFlag);
 	
 	virtual void reInitWeight();
 
@@ -130,6 +130,12 @@ namespace layers {
 	const virtual real_vector& weights() const;
 
         virtual real_vector& weightUpdates();
+	
+	/**
+	 * Set and read the m_currTrainingEpoch
+	 */
+	virtual void setCurrTrainingEpoch(const int curTrainingEpoch);
+	virtual int& getCurrTrainingEpoch();
 
     };
 

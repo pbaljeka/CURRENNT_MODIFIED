@@ -57,10 +57,14 @@ namespace layers {
         pattype_vector    m_patTypes;
 	
 	/* Add 16-02-22 Wang: for WE updating */
-	bool              m_InputWeUpdate;    // the whether layer is the input with we to be updated?
-	                                      // we can not define it in Trainable layer because input layer is
-	                                      // not derived from trainable layer. 
-	cpu_real_vector   m_outputErrorsCopy; // make a CPU copy
+	bool              m_InputWeUpdate;     // the whether layer is the input layer with WE 
+	                                       // to be updated ?
+	                                       // We can not define it in Trainablelayer 
+	                                       // because input layer only inherits from layer
+	cpu_real_vector   m_outputErrorsCopy;  // make a CPU copy
+
+	/* Add 16-09-28 Wang: the current training epoch */
+	int               m_currTrainingEpoch; // maybe useful
 
     protected:
         real_vector& _outputs();
@@ -77,11 +81,12 @@ namespace layers {
          * Constructs the Layer
          *
          * @param layerChild        The layer child of the JSON configuration for this layer
-         * @param parallelSequences The maximum number of sequences that shall be computed in parallel
+         * @param parallelSequences The maximum number of sequences  computed in parallel
          * @param maxSeqLength      The maximum length of a sequence
          * @param createOutputs     If false, then the outputs vector will be left empty
          */
-        Layer(const helpers::JsonValue &layerChild, int parallelSequences, int maxSeqLength, bool createOutputs = true);
+        Layer(const helpers::JsonValue &layerChild, 
+	      int parallelSequences, int maxSeqLength, bool createOutputs = true);
 	
 	// overload for CNN
 	Layer(const helpers::JsonValue &layerChild, int parallelSequences, int maxSeqLength, 
@@ -203,6 +208,13 @@ namespace layers {
 	   only defines for Trainable Layers
 	 */
 	virtual void reInitWeight() = 0;
+	
+
+	/**
+	 * Set and read the m_currTrainingEpoch
+	 */
+	virtual void setCurrTrainingEpoch(const int curTrainingEpoch);
+	virtual int& getCurrTrainingEpoch();
 	
     };
 

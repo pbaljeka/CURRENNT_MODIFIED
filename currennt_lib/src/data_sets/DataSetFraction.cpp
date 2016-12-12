@@ -82,7 +82,26 @@ namespace data_sets {
     {
         return m_targetClasses;
     }
-
+    
+    const Cpu::real_vector& DataSetFraction::auxRealData() const
+    {
+	return m_auxRealData;
+    }
+    
+    const Cpu::pattype_vector& DataSetFraction::auxPattypeData() const
+    {
+	return m_auxPattypeData;
+    }
+    
+    const Cpu::int_vector& DataSetFraction::auxIntData() const
+    {
+	return m_auxIntData;
+    }
+    
+    const int& DataSetFraction::auxDataDim() const
+    {
+	return m_auxDataDim;
+    }
 
     const Cpu::int_vector& DataSetFraction::txtData() const
     {
@@ -94,5 +113,9 @@ namespace data_sets {
         return m_maxTxtLength;
     }
   
+    int DataSetFraction::fracTimeLength() const
+    {
+	return m_fracTotalLength;
+    }
 
 } // namespace data_sets

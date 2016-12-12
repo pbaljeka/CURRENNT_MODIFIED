@@ -64,7 +64,16 @@ namespace data_sets {
 	int m_txtPatternSize;
 	int m_maxTxtLength;                 // the maximum length of txt of this faction
 	Cpu::int_vector   m_txtData;       // the txt input data of this fraction
+	
+	// Add 1024 
+	int m_fracTotalLength;
 
+	// Add 1111
+	int m_auxDataDim;
+	Cpu::pattype_vector m_auxPattypeData;
+	Cpu::real_vector    m_auxRealData;
+	Cpu::int_vector     m_auxIntData;
+	
     private:
         /**
          * Creates the instance
@@ -140,6 +149,12 @@ namespace data_sets {
          */
         const Cpu::real_vector& outputs() const;
 
+	
+	const Cpu::real_vector&    auxRealData() const;
+	const Cpu::pattype_vector& auxPattypeData() const;
+	const Cpu::int_vector&     auxIntData() const;
+	const int& auxDataDim() const;
+
         /**
          * Returns the target classes vector
          *
@@ -157,8 +172,10 @@ namespace data_sets {
 
 	int maxTxtLength() const;
 
-        
-	
+	/*
+	 * Return the number of valid frames for this current fraction
+	 */
+	int fracTimeLength() const;
     };
 
 } // namespace data_sets

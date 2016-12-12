@@ -25,6 +25,7 @@
 #endif
 
 #include "TrainableLayer.hpp"
+#include "../helpers/getRawPointer.cuh"
 #include "../helpers/JsonClasses.hpp"
 #include "../Configuration.hpp"
 
@@ -37,9 +38,30 @@
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/functional.h>
+#include <thrust/fill.h>
 #include <thrust/sequence.h>
+#include <thrust/iterator/counting_iterator.h>
 
 #include <cmath>
+
+namespace internal {
+
+    struct CopyWeight
+    {
+	real_t *sourceW;
+	real_t *targetW;
+	int sNRow;
+	int tNRow;
+	int mode;
+
+	__host__ __device__ void operator() (const int idx) const
+	{
+	    int tarIdx = (mode==2) ? ( (idx / sNRow) * tNRow + idx % sNRow) : (idx);
+	    *(targetW + tarIdx) = *(sourceW + idx);
+	}
+    };
+
+}
 
 namespace layers {
 
@@ -48,7 +70,14 @@ namespace layers {
     {
         return m_weightUpdates;
     }
-
+    
+     
+    template <typename TDevice>
+    const unsigned& TrainableLayer<TDevice>::_optOpt() const
+    {
+        return m_optOpt;
+    }
+    
     template <typename TDevice>
     TrainableLayer<TDevice>::TrainableLayer(const helpers::JsonValue &layerChild, 
 					    const helpers::JsonValue &weightsSection, 
@@ -72,10 +101,15 @@ namespace layers {
             throw std::runtime_error(std::string("Missing value 'bias' in layer '") + 
 				     this->name() + "'");
 
-        // extract the weights if they are given in the network file
+	const Configuration &config = Configuration::instance();
+	
+	m_optOpt = config.optimizerOption();
+	
+	// extract the weights if they are given in the network file
         Cpu::real_vector weights;
 
         if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())) {
+	    printf("Trainable layer: re-read weight");
             if (!weightsSection->HasMember(this->name().c_str()))
                 throw std::runtime_error(std::string("Missing weights section for layer '") + 
 					 this->name() + "'");
@@ -128,12 +162,11 @@ namespace layers {
         }
         // create random weights if no weights are given in the network file
         else {
+	    printf("Trainable layer: initialize weight");
             weights.resize(this->size() * 
 			   (inputWeightsPerBlock * (m_precedingLayer.size() + 1) + 
 			    internalWeightsPerBlock)
-			   );
-
-            const Configuration &config = Configuration::instance();
+			   );           
 
             static boost::mt19937 *gen = NULL;
             if (!gen) {
@@ -200,9 +233,11 @@ namespace layers {
     {
         //std::cout << "Creating layer " << this->name() << std::endl;
         // check if the bias value exists
-        if (!layerChild->HasMember("bias"))
+        /*if (!layerChild->HasMember("bias"))
             throw std::runtime_error(std::string("Missing value 'bias' in layer '") + 
 				     this->name() + "'");
+	// Configuration
+	const Configuration &config = Configuration::instance();
 
         // extract the weights if they are given in the network file
         Cpu::real_vector weights;
@@ -260,7 +295,7 @@ namespace layers {
         else {
             weights.resize(weightSize);
 
-            const Configuration &config = Configuration::instance();
+            
 
             static boost::mt19937 *gen = NULL;
             if (!gen) {
@@ -281,16 +316,17 @@ namespace layers {
                     weights[i] = dist(*gen);
             }
         }
-
+	
         m_weights       = weights;
         m_weightUpdates = weights;
-	
+		
 	// Add 04013 Wang: for weight Mask
 	for (size_t i = 0; i < weights.size(); ++i)
 	    weights[i] = 1.0;
 	m_weightMask    = weights;          // make it the same length as weights matrix 
 	m_weightNum     = weights.size();   // 
-	m_weightMaskFlag= false;	
+	m_weightMaskFlag= false;	*/
+	throw std::runtime_error("Not implemented");
     }
 
 
@@ -324,7 +360,7 @@ namespace layers {
         return m_learningRate;
     }
 
-/*    template <typename TDevice>
+    /*  template <typename TDevice>
     typename TrainableLayer<TDevice>::real_vector& TrainableLayer<TDevice>::outputErrors()
     {
         return m_outputErrors;
@@ -514,7 +550,7 @@ namespace layers {
     // Add 0527: re-read the weight from weightsSection
     template <typename TDevice>
     void TrainableLayer<TDevice>::reReadWeight(const helpers::JsonValue &weightsSection,
-					       const int layerSize)
+					       const int layerSize, const int readCtrFlag)
     {
 
 	Cpu::real_vector weights;
@@ -535,35 +571,105 @@ namespace layers {
 	    const rapidjson::Value &inputWeightsChild    = weightsChild["input"];
             const rapidjson::Value &biasWeightsChild     = weightsChild["bias"];
             const rapidjson::Value &internalWeightsChild = weightsChild["internal"];
-
-            if (inputWeightsChild.Size() != layerSize * 
-		m_inputWeightsPerBlock * m_precedingLayer.size())
-                throw std::runtime_error(std::string("Invalid number of input weights for layer '") 
-					 + this->name() + "'");
-            if (biasWeightsChild.Size() != layerSize * m_inputWeightsPerBlock)
-                throw std::runtime_error(std::string("Invalid number of bias weights for layer '") 
-					 + this->name() + "'");
-            if (internalWeightsChild.Size() != layerSize * m_internalWeightsPerBlock)
-                throw std::runtime_error(std::string("Invalid number of internal for layer '") 
-					 + this->name() + "'");
-
-            weights.reserve(inputWeightsChild.Size() + 
-			    biasWeightsChild.Size() + 
-			    internalWeightsChild.Size());
-
-            for (rapidjson::Value::ConstValueIterator it = inputWeightsChild.Begin(); 
-		 it != inputWeightsChild.End(); 
-		 ++it)
-                weights.push_back(static_cast<real_t>(it->GetDouble()));
-            for (rapidjson::Value::ConstValueIterator it = biasWeightsChild.Begin(); 
-		 it != biasWeightsChild.End(); 
-		 ++it)
-                weights.push_back(static_cast<real_t>(it->GetDouble()));
-            for (rapidjson::Value::ConstValueIterator it = internalWeightsChild.Begin(); 
-		 it != internalWeightsChild.End(); 
-		 ++it)
-                weights.push_back(static_cast<real_t>(it->GetDouble()));
 	    
+	    // three kinds of possibility to read the weights
+	    if (readCtrFlag==1){
+		// the number of parameter should match exactly
+		if (inputWeightsChild.Size() != layerSize * 
+		    m_inputWeightsPerBlock * m_precedingLayer.size())
+		    throw std::runtime_error(std::string("Invalid number of input weights: '") 
+					     + this->name() + "'");
+		if (biasWeightsChild.Size() != layerSize * m_inputWeightsPerBlock)
+		    throw std::runtime_error(std::string("Invalid number of bias weights: '") 
+					     + this->name() + "'");
+		if (internalWeightsChild.Size() != layerSize * m_internalWeightsPerBlock)
+		    throw std::runtime_error(std::string("Invalid number of internal '") 
+					     + this->name() + "'");
+
+		weights.reserve(inputWeightsChild.Size() + 
+				biasWeightsChild.Size() + 
+				internalWeightsChild.Size());
+
+		for (rapidjson::Value::ConstValueIterator it = inputWeightsChild.Begin(); 
+		     it != inputWeightsChild.End(); 
+		     ++it)
+		    weights.push_back(static_cast<real_t>(it->GetDouble()));
+		for (rapidjson::Value::ConstValueIterator it = biasWeightsChild.Begin(); 
+		     it != biasWeightsChild.End(); 
+		     ++it)
+		    weights.push_back(static_cast<real_t>(it->GetDouble()));
+		for (rapidjson::Value::ConstValueIterator it = internalWeightsChild.Begin(); 
+		     it != internalWeightsChild.End(); 
+		     ++it)
+		    weights.push_back(static_cast<real_t>(it->GetDouble()));
+		
+	    }else if (readCtrFlag == 2 || readCtrFlag == 3){
+		
+		if (m_inputWeightsPerBlock != 1 || m_internalWeightsPerBlock != 0)
+		    throw std::runtime_error(std::string("trainParameterCtr=2 not support LSTM"));
+		
+		int tempThisWeightSize = this->size() * 
+		    (m_inputWeightsPerBlock * (m_precedingLayer.size() + 1) + 
+		     m_internalWeightsPerBlock);
+		
+		int preTrainedNRow     = ((readCtrFlag == 2) ? 
+					  (inputWeightsChild.Size() / this->size()) : 
+					  (m_precedingLayer.size()));
+
+		if (inputWeightsChild.Size() > tempThisWeightSize)
+		    throw std::runtime_error(std::string("not support larger pre-trained layer"));
+		
+		// space for this layer, the remaining parameter are 0.0
+		weights.resize(tempThisWeightSize, 0.0);
+		
+		// space for the pretrained matrix
+		Cpu::real_vector preTrainedWeights;
+		preTrainedWeights.reserve(inputWeightsChild.Size() + 
+					  biasWeightsChild.Size() + 
+					  internalWeightsChild.Size());
+		
+		
+		for (rapidjson::Value::ConstValueIterator it = inputWeightsChild.Begin(); 
+		     it != inputWeightsChild.End(); 
+		     ++it)
+		    preTrainedWeights.push_back(static_cast<real_t>(it->GetDouble()));
+		for (rapidjson::Value::ConstValueIterator it = biasWeightsChild.Begin(); 
+		     it != biasWeightsChild.End(); 
+		     ++it)
+		    preTrainedWeights.push_back(static_cast<real_t>(it->GetDouble()));
+		
+		// copy the weight part
+		{{
+			
+			internal::CopyWeight fn;
+			fn.sNRow = preTrainedNRow;
+			fn.tNRow = m_precedingLayer.size();
+			fn.mode  = readCtrFlag;
+			fn.sourceW = helpers::getRawPointer(preTrainedWeights);
+			fn.targetW = helpers::getRawPointer(weights);
+
+			int n = inputWeightsChild.Size();
+			//thrust::counting_iterator<int> first(0);
+			//thrust::counting_iterator<int> last = first + n;
+			//thrust::for_each(first, last, fn);
+			
+			for (int idx=0; idx < n; idx++){
+			    int tarIdx = ((readCtrFlag==2) ? 
+					  ((idx / fn.sNRow) * fn.tNRow + idx % fn.sNRow) : 
+					  (idx));
+			    weights[tarIdx] = preTrainedWeights[idx];
+			}
+			
+		}}
+		
+		// copy the bias part
+		thrust::copy(preTrainedWeights.begin() + inputWeightsChild.Size(),
+			     preTrainedWeights.end(),
+			     weights.begin() + this->size() * m_precedingLayer.size());
+		
+	    }else{
+		throw std::runtime_error(std::string("trainedParameterCtr not string of 0/1/2/3"));
+	    }
 	    m_weights       = weights;
 	    m_weightUpdates = weights;
 	    
@@ -583,6 +689,7 @@ namespace layers {
     {
 	return m_internalWeightsPerBlock;
     }
+    
 
     // explicit template instantiations
     template class TrainableLayer<Cpu>;
