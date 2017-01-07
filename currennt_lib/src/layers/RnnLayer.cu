@@ -208,7 +208,7 @@ namespace {
 
             // store the gradients
             unitDeltas[outputIdx] = helpers::limitedError(unitDeltaData);
-	    //unitDeltas[outputIdx] = unitDeltaData;
+	    // unitDeltas[outputIdx] = unitDeltaData;
         }
     };
 
@@ -762,6 +762,18 @@ namespace layers {
 		}
 		int h2hMatrixIdx = 0;
 		for (int t=0; t < this->curMaxSeqLength(); t++){
+		    // Note:
+		    // w1 w2 | w3 w4
+		    //
+		    //       ^
+		    //       |
+		    //       boundary here notify the next time step (w3) to update
+		    // it works for the -> computation step of bi-drectional RNN
+		    // but, it should notify w2 to update in <- computation of bi-RNN
+		    // Thus, bidirection case, clockTime[t+1] should be used
+
+		    // 1212: Modify the assignment of clock schedule
+		    
 		    // assign h2hIdx
 		    h2hMatrixIdx = (int)clockTime[t] - 1;
 		    m_fw.timestepMatrices[t].h2hIdx = h2hMatrixIdx;
@@ -780,6 +792,36 @@ namespace layers {
 		    m_fw.timestepMatrices[t].skipCRPos = t * rows;
 		    if(m_isBidirectional) {m_bw.timestepMatrices[t].skipCRPos = 
 			    m_fw.timestepMatrices[t].skipCRPos;}
+		    
+		    
+		    /*
+		    h2hMatrixIdx = (int)clockTime[t] - 1;
+		    m_fw.timestepMatrices[t].h2hIdx = h2hMatrixIdx;
+
+		    h2hMatrixIdx = h2hMatrixIdx * rows * rows;
+		    m_fw.timestepMatrices[t].h2hWrap = 
+			helpers::Matrix<TDevice>(&m_h2hClockRNN, rows, rows, h2hMatrixIdx);
+		    
+		    m_fw.timestepMatrices[t].skipCRPos = t * rows;
+
+		    if(m_isBidirectional) {
+			if (t == (this->curMaxSeqLength()-1)){
+			    h2hMatrixIdx = (int)clockTime[0]   - 1;
+			    m_bw.timestepMatrices[t].skipCRPos = 
+				m_fw.timestepMatrices[0].skipCRPos;
+			}else{
+			    h2hMatrixIdx = (int)clockTime[t+1] - 1;
+			    m_bw.timestepMatrices[t].skipCRPos = 
+				m_fw.timestepMatrices[t+1].skipCRPos;
+			}
+			// 
+			m_bw.timestepMatrices[t].h2hIdx = h2hMatrixIdx;
+			// pointer to the matrix
+			h2hMatrixIdx = h2hMatrixIdx * rows * rows + m_h2hClockRNN.size()/2;
+			m_bw.timestepMatrices[t].h2hWrap = 
+			    helpers::Matrix<TDevice>(&m_h2hClockRNN, rows, rows, h2hMatrixIdx);
+			    }*/
+		    
 		}
 
 		// Create the skipCR for every time step based on the boundary information
@@ -829,6 +871,16 @@ namespace layers {
 	    // For debug
 	    // Show all the H2H matrices
 	    if (DEBUG_CLOCKRNN){
+		
+		Cpu::bool_vector tmpFlagCR = m_fw.skipCR;
+		for (int timestep=0; timestep < this->curMaxSeqLength(); timestep++){
+		    printf("%d:\n", timestep);
+		    for (int i = 0; i < rows; i++){
+			printf("%d ", tmpFlagCR[i+timestep*rows]);
+		    }
+		    printf("\n");
+		}
+
 		Cpu::real_vector h2hMatrix_debug = m_h2hClockRNN;
 		int biasPos_debug = 0;
 		for (int i = 0; i < m_numH2Hmat; i++){
@@ -871,6 +923,20 @@ namespace layers {
 		}
 	    }
 	}	
+    }
+
+    template <typename TDevice>
+    void RnnLayer<TDevice>::prepareStepGeneration(const int timeStep)
+    {
+	m_precLayerOutputsWrapA = helpers::Matrix<TDevice>(
+		&this->precedingLayer().outputs(), 
+		this->precedingLayer().size(), this->parallelSequences(),
+		timeStep * this->parallelSequences() * this->precedingLayer().size());
+	
+	int rows = this->size() / (m_isBidirectional ? 2 : 1);
+	m_fw.unitActsWrapA   = helpers::Matrix<TDevice>(
+		&m_fw.unitActs, rows, this->parallelSequences(),
+		timeStep * this->parallelSequences() * rows);
     }
 
     template <typename TDevice>
@@ -1012,6 +1078,84 @@ namespace layers {
 
     }
 
+    template <typename TDevice>
+    void RnnLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+	// for unidirectional LSTM, we can write the outputs directly in the layer output vector
+        if (!m_isBidirectional) {
+            m_fw.tmpOutputs.swap(this->_outputs());
+        }
+
+	// step1. from precedingLayer to this layer
+	//        matrix multiplication, save to the m_fw and m_bw buffers
+	{{
+	     // forward
+	     m_fw.unitActsWrapA.assignProduct(m_fw.weightMatrices.InputToHiddenWrap, true, 
+					      m_precLayerOutputsWrapA, false);
+	}}
+
+	// step2. from time 0 to T-1, compute and transform
+	{{
+	    // effective layer size (bi-directional half)
+	    int els = this->size() / (m_isBidirectional ? 2 : 1);
+	    // shift to the data of the next time step
+	    // (one time step may contain multiple parallel utterances)
+            int n   = this->parallelSequences() * els;             
+	    
+	    // forward states
+            internal::ComputeBlockOutputFn fn;
+            fn.effLayerSize       = els;
+            fn.prevOutputDistance = -n;
+            fn.bias               = this->bias();
+            fn.patTypes           = helpers::getRawPointer(this->patTypes());
+            fn.biasWeights        = _rawBiasWeights;
+            fn.unitActs           = helpers::getRawPointer(m_fw.unitActs);
+	    fn.unitActsBuf        = helpers::getRawPointer(m_fw.unitActsBuf);
+	    
+	    //for (int timestep = 0; timestep < this->curMaxSeqLength(); ++timestep) {
+				
+	    if (timeStep != 0) {
+		// Add W*H_t-1 to output
+		if (m_clockRNN){
+		    m_fw.timestepMatrices[timeStep].unitActsBufWrapT.assignProduct(
+			 m_fw.timestepMatrices[timeStep].h2hWrap,           true, 
+			 m_fw.timestepMatrices[timeStep-1].tmpOutputsWrapT, false);
+		}else{
+		    m_fw.timestepMatrices[timeStep].unitActsBufWrapT.assignProduct(
+			 m_fw.weightMatrices.HiddenToHiddenWrap,            true, 
+			 m_fw.timestepMatrices[timeStep-1].tmpOutputsWrapT, false);
+		}
+	    }
+
+	    // for ClockRNN
+	    if (m_clockRNN)
+		fn.skipCRNN  = (helpers::getRawPointer(m_fw.skipCR) + 
+				m_fw.timestepMatrices[timeStep].skipCRPos);
+	    else
+		fn.skipCRNN  = NULL;
+		
+	    thrust::transform(
+		  thrust::counting_iterator<int>(n*timeStep),
+		  thrust::counting_iterator<int>(n*timeStep) + n,
+		  thrust::make_zip_iterator(
+		    thrust::make_tuple(
+		      thrust::constant_iterator<bool>(!timeStep), 
+		      thrust::constant_iterator<bool>(timeStep >= this->curMinSeqLength()))),
+		  m_fw.tmpOutputs.begin() + n*timeStep,
+		  fn
+		);
+	}}
+
+	// step3. get results from m_fw, m_bw to this->outputs()
+        // resort outputs
+        if (m_isBidirectional) {
+	    
+        }else {
+            this->_outputs().swap(m_fw.tmpOutputs);
+        }
+
+    }
+
 
     template <typename TDevice>
     void RnnLayer<TDevice>::computeBackwardPass()
@@ -1087,7 +1231,11 @@ namespace layers {
 			m_fw.timestepMatrices[timestep].tmpOutputErrorsWrapT.addProduct(
 				m_fw.timestepMatrices[timestep+1].h2hWrap, false, 
 				m_fw.timestepMatrices[timestep+1].unitDeltasWrapT, false);
-
+			// Note: h2hWrap contains 1-diagonal block, which copies the gradient
+			//       from the next step to this step.
+			//       Together with step3 below, the gradient w.r.t hidden, input and
+			//       bias can be correctly set
+			
 			// step3. set the gradient of the next step to zero
 			/*{{
 			    internal::CleanUnitDeltasClockRnn fn;

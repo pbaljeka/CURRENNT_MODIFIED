@@ -62,6 +62,7 @@
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/iterator/counting_iterator.h>
 
+#include <sstream>
 #include <fstream>
 #include <cmath>
 
@@ -70,7 +71,17 @@
 
 namespace layers {
     
-
+    Cpu::int_vector parseSecondOutputOpt(const std::string options)
+    {
+	Cpu::int_vector tmp;
+	tmp.clear();
+	if (options.size()){
+	    for (int i = 0; i<options.size(); i++)
+		tmp.push_back(options[i] - '0');
+	}
+	return tmp;
+    }
+    
     /********************************************************
      MDNLayer
     *******************************************************/
@@ -89,12 +100,16 @@ namespace layers {
 	int unitSOut, unitEOut;
 	int outputSize = 0;
 	m_mdnParaDim = 0;
-
+	
 	// build the MDN unit
 	MDNUnit<TDevice> *mdnUnit;
 	
 	// get the flag for variance tying
-	m_tieVarMDNUnit = config.getTiedVariance();
+	m_tieVarMDNUnit   = config.getTiedVariance();
+	
+	// get the string for secondoutput configuration
+	m_secondOutputOpt = parseSecondOutputOpt(config.secondOutputOpt());
+	m_secondOutputDim = 0;
 	
 	// tmp Buff to read the configuration
 	Cpu::int_vector flagTieVariance;
@@ -105,6 +120,7 @@ namespace layers {
 	flagTieVariance.clear();
 	flagTrainable.clear();
 	optTanhAutoReg.clear();
+
 	
 	/******************* Read config ********************/
 	// read in the configuration from .autosave 
@@ -152,6 +168,16 @@ namespace layers {
 		    optTanhAutoReg.push_back(static_cast<int>(it->GetInt()));
 	    }
 
+	    // read in the secondOutputOpt
+	    if (weightsChild.HasMember("feedbackOpt") &&
+		weightsChild["feedbackOpt"].IsArray()){
+		m_secondOutputOpt.clear();
+		const rapidjson::Value &BuftieVarianceFlag = weightsChild["feedbackOpt"];
+		for (rapidjson::Value::ConstValueIterator it = BuftieVarianceFlag.Begin(); 
+		     it != BuftieVarianceFlag.End(); ++it)
+		    m_secondOutputOpt.push_back(static_cast<int>(it->GetInt()));
+	    }
+	    
 	// read in the configuration from mdn_config (binary file)
         }else{
 	    std::ifstream ifs(config.mdnFlagPath().c_str(), 
@@ -193,18 +219,21 @@ namespace layers {
 	    ifs.close();
 	}
 
-
 	// check configuration
-	if (m_mdnConfigVec.size() != numEle*5+1){
+	if (m_mdnConfigVec.size()  != numEle*5+1)
 	    throw std::runtime_error("Error in reading the configuration of MDN");
-	}
-	if (flagTieVariance.size() != flagTrainable.size() ||
-	    (flagTieVariance.size() >0 && flagTieVariance.size() != numEle)){
-	    throw std::runtime_error("Error in tieVarianceFlag and trainableFlag (in model file)");
-	}
-
 	
-	// read Trainable from input argument
+	if (flagTieVariance.size() != flagTrainable.size() ||
+	    (flagTieVariance.size() >0 && flagTieVariance.size() != numEle))
+	    throw std::runtime_error("Error in tieVarianceFlag and trainableFlag (in model file)");
+	
+	if (m_secondOutputOpt.size()>0 && m_secondOutputOpt.size() != numEle)
+	    throw std::runtime_error("Error in feedbackOpt. Length unequal to #. MDNUnits");
+	else if(m_secondOutputOpt.size() == 0){
+	    for (int i =0; i< numEle; i++) m_secondOutputOpt.push_back(MDNUNIT_FEEDBACK_OPT_0);
+	}
+	
+	// mdnDyn: read Trainable from input argument
 	if (config.mdnDyn().size() > 0){
 	    if (config.mdnDyn().size() != numEle){
 		// num1_num2_num3 format
@@ -229,7 +258,7 @@ namespace layers {
 	    flagTrainable_arg.resize(numEle, 0);
 	}
 
-	// read Trainable from input argument
+	// tanhAutoReg: read Trainable from input argument
 	if (config.mdnDyn().size() > 0 && config.tanhAutoregressive().size() > 0){
 	    optTanhAutoReg_arg.resize(config.mdnDyn().size(), 0);
 	    if (config.tanhAutoregressive().size() != numEle){
@@ -260,18 +289,20 @@ namespace layers {
 	    // binomial distribution (parametrized as sigmoid function)
 	    if (mdnType==MDN_TYPE_SIGMOID){
 		mdnUnit = new MDNUnit_sigmoid<TDevice>(unitS, unitE, unitSOut, unitEOut, mdnType, 
-						       precedingLayer, this->size());
+						       precedingLayer, this->size(),
+						       MDNUNIT_TYPE_0, m_secondOutputOpt[i]);
 		m_mdnParaDim += (unitE - unitS);
 		outputSize += (unitE - unitS);
-		printf("MDN sigmoid\n");
+		printf("\tMDN sigmoid\n");
 		
 	    // multi-nomial distribution (parameterized by softmax function)
 	    }else if(mdnType==MDN_TYPE_SOFTMAX){
 		mdnUnit = new MDNUnit_softmax<TDevice>(unitS, unitE, unitSOut, unitEOut, mdnType, 
-						       precedingLayer, this->size());
+						       precedingLayer, this->size(),
+						       MDNUNIT_TYPE_0, m_secondOutputOpt[i]);
 		m_mdnParaDim += (unitE - unitS);
 		outputSize += 1;
-		printf("MDN softmax\n");
+		printf("\tMDN softmax\n");
 
 	    // Gaussian mixture distribution
 	    }else if(mdnType > 0){
@@ -293,7 +324,7 @@ namespace layers {
 					   (optTanhAutoReg[i])       :
 					   (optTanhAutoReg_arg[i]));
 		
-		printf("MDN mixture: trainable: %2d, tieVariance %d, #parameter ", 
+		printf("\tMDN mixture: trainable: %2d, tieVariance %d, #parameter ", 
 		       tmpTrainableFlag, tmpTieVarianceFlag);
 		int featureDim;   
 		int thisWeightNum; 
@@ -312,12 +343,13 @@ namespace layers {
 		    
 		    // trainable unit with dynamic link (weight predicted by the network)
 		    case MDNUNIT_TYPE_2:
-			mdnUnit = new MDNUnit_mixture_dynSqr<TDevice>(
+			/*mdnUnit = new MDNUnit_mixture_dynSqr<TDevice>(
 					unitS, unitE, unitSOut, unitEOut, mdnType, 
 					precedingLayer, this->size(), 
 					tmpTieVarianceFlag, 2);
-			printf("%d, with dynamic link\n", 0);
-			break;
+					printf("%d, with dynamic link\n", 0);*/
+			throw std::runtime_error("Dynamic AR model is not supported now\n");
+			
 
 		    // conventional non-trainable unit
 		    case MDNUNIT_TYPE_0: 
@@ -325,7 +357,9 @@ namespace layers {
 			mdnUnit = new MDNUnit_mixture<TDevice>(
 					unitS, unitE, unitSOut, unitEOut, mdnType, 
 					featureDim, precedingLayer, this->size(), 
-					tmpTieVarianceFlag);
+					tmpTieVarianceFlag,
+					MDNUNIT_TYPE_0,
+					m_secondOutputOpt[i]);
 			printf("%d\n", 0);
 			break;
 
@@ -385,13 +419,13 @@ namespace layers {
 					precedingLayer, this->size(), 
 					tmpTieVarianceFlag, weightsNum, thisWeightNum,
 					lookBackStep, tmpTrainableFlag, dynDirection, realPole,
-					tmpTanhAutoReg);
+					tmpTanhAutoReg, m_secondOutputOpt[i]);
 			
 			weightsNum += thisWeightNum;
 			
 			this->m_trainable = true;
 			
-			printf("%-8d, AR order and direction: %d %d", 
+			printf("\t%-8d, AR order and direction: %d %d", 
 			       thisWeightNum, lookBackStep, dynDirection);
 			
 			if (tmpTanhAutoReg){
@@ -427,11 +461,14 @@ namespace layers {
 	    }else{
 		throw std::runtime_error("mdnUnit type invalid (>0, 0, -1)");
 	    }
+	    // accumulate the dim for feedback (if necessary)
+	    m_secondOutputDim += mdnUnit->feedBackDim();
+	    
 	    m_mdnUnits.push_back(boost::shared_ptr<MDNUnit<TDevice> >(mdnUnit));
 	}
 
 	/********************  check               ****************/
-	printf("MDN layer distribution parameter number: %d\n", m_mdnParaDim);
+	printf("\tMDN layer distribution parameter number: %d\n", m_mdnParaDim);
 	if (m_mdnParaDim != precedingLayer.size()){
 	    printf("MDN parameter dim %d is not equal to NN output dimension %d\n", 
 		   m_mdnParaDim, precedingLayer.size());
@@ -444,8 +481,6 @@ namespace layers {
 	    throw std::runtime_error("");
 	}
 	
-	
-
 	
 	/********************  Initialize the weight ****************/
 	cpu_real_vector weights;
@@ -510,14 +545,14 @@ namespace layers {
 		    boost::random::normal_distribution<real_t> dist(0.0, config.arRMDNInitVar());
 		    for (size_t i = 0; i < weights.size(); ++i)
 			weights[i] = dist(*gen);
-		    printf("\nARRMDN para initialized as Gaussian noise (var: %f)", 
+		    printf("\n\tARRMDN para initialized as Gaussian noise (var: %f)", 
 			   config.arRMDNInitVar());
 		}else{
-		    printf("\nARRMDN initialized as zero");
+		    printf("\n\tARRMDN initialized as zero");
 		}
 	    }
-	    printf("\nMDN trainable mixture is used."); 
-	    printf("The number of trainable parameter is %d\n", weightsNum);
+	    printf("\n\tMDN trainable mixture is used."); 
+	    printf("\tThe number of trainable parameter is %d\n", weightsNum);
 	    m_sharedWeights       = weights;
 	    m_sharedWeightUpdates = weights;
 	    
@@ -526,7 +561,14 @@ namespace layers {
 		mdnUnit->linkWeight(m_sharedWeights, m_sharedWeightUpdates);
 	    }
 	}
-	
+
+	// Allocate memory for second output (for feedback, if necessary)
+	if (m_secondOutputDim > 0){
+	    Cpu::real_vector tmp(this->outputs().size()/this->size() * m_secondOutputDim, 0.0);
+	    m_secondOutput = tmp;
+	}else{
+	    m_secondOutput.clear();
+	}
     }
 
     template <typename TDevice>
@@ -547,11 +589,16 @@ namespace layers {
 	real_t temp = 0.0;
 	real_t temp2= 0.0;
 	int i=0;
+	
 	BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
-	    temp2 = mdnUnit->calculateError(this->_targets());
-	    if (temp2 != temp2)
-		printf("NaN: %d-th unit\t", i);
-	    temp += temp2;
+	    if (this->flagMseWeight() && this->_mseWeightCPU()[i] < 0.0){
+		
+	    }else{
+		temp2 = mdnUnit->calculateError(this->_targets());
+		if (temp2 != temp2)
+		    printf("NaN: %d-th unit\t", i);
+		temp += temp2;
+	    }
 	    ++i;
 	}
 	return temp;
@@ -578,13 +625,27 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void MDNLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+	BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
+	    mdnUnit->computeForward(timeStep);
+	}
+    }
+
+    template <typename TDevice>
     void MDNLayer<TDevice>::computeBackwardPass()
     {
 	thrust::fill(this->_outputErrors().begin(),
 		     this->_outputErrors().end(),
 		     (real_t)0.0);
+	int i = 0;
 	BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
-	    mdnUnit->computeBackward(this->_targets());
+	    if (this->flagMseWeight() && this->_mseWeightCPU()[i] < 0.0){
+		//continue; // skip this unit if specified by the mseWeight
+	    }else{
+		mdnUnit->computeBackward(this->_targets());
+	    }
+	    i++;
 	}
     }
     
@@ -594,7 +655,8 @@ namespace layers {
     {
 	if (!weightsObject->IsObject())
             throw std::runtime_error("The JSON value is not an object");
-	
+
+	// config
 	rapidjson::Value inputConfig(rapidjson::kArrayType);
 	int inputConfigCount = this->m_mdnConfigVec.size();
 	inputConfig.Reserve(inputConfigCount, allocator);
@@ -603,7 +665,8 @@ namespace layers {
 	rapidjson::Value weightsSection(rapidjson::kObjectType);
 	weightsSection.AddMember("config", inputConfig, allocator);
 	
-	
+
+	// weight
         // do nothing if we don't have any weights
 	if (m_sharedWeights.empty()){
 	    //weightsObject->AddMember(this->name().c_str(), weightsSection, allocator);
@@ -640,16 +703,22 @@ namespace layers {
 	trainableType.Reserve(mdnUnitCounts, allocator);
 	rapidjson::Value tanhRegAutoType(rapidjson::kArrayType);
 	tanhRegAutoType.Reserve(mdnUnitCounts, allocator);
+	rapidjson::Value secondOutputOpt(rapidjson::kArrayType);
+	secondOutputOpt.Reserve(mdnUnitCounts, allocator);
+	
 
+	int cnt = 0;
 	BOOST_FOREACH (const boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
 	    tieVariance.PushBack((int)mdnUnit->flagVariance(), allocator);
 	    trainableType.PushBack(mdnUnit->flagTrainable(), allocator);
 	    tanhRegAutoType.PushBack((int)mdnUnit->tanhRegType(), allocator);
+	    secondOutputOpt.PushBack((int)m_secondOutputOpt[cnt], allocator);
+	    cnt++;
 	}
 	weightsSection.AddMember("tieVarianceFlag",  tieVariance, allocator);
 	weightsSection.AddMember("trainableFlag",  trainableType, allocator);
 	weightsSection.AddMember("tanhAutoReg",  tanhRegAutoType, allocator);
-	
+	weightsSection.AddMember("feedbackOpt",  secondOutputOpt, allocator);	
 	// add the weights section to the weights object
 	weightsObject->AddMember(this->name().c_str(), weightsSection, allocator);
 	return;
@@ -670,6 +739,7 @@ namespace layers {
     {
 	Cpu::real_vector weights;
 	if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())){
+	    printf("read wight for layer %s", this->name().c_str());
 	    const rapidjson::Value &weightsChild = (*weightsSection)[this->name().c_str()];
             if (!weightsChild.IsObject())
                 throw std::runtime_error(std::string("Weights section for layer '") + 
@@ -706,7 +776,7 @@ namespace layers {
 	    m_sharedWeightUpdates = weights;
 	    
 	}else{
-	    throw std::runtime_error(std::string("Can't find layer:")+this->name().c_str());
+	    printf("not read wight for layer %s", this->name().c_str());
 	}
     }
 
@@ -717,7 +787,7 @@ namespace layers {
 	// Modify 05-24 Add support to EM-style generation
 	if (para < -3.0)
 	{
-	    throw std::runtime_error("Parameter to MDN->getOutput can't be less than -2.0");
+	    throw std::runtime_error("mdn_samplePara can't be less than -3.0");
 	}
 	else if (para >= 0.0)
 	{
@@ -763,6 +833,28 @@ namespace layers {
 	Cpu::real_vector temp=this->_targets();
 	printf("Sampling: %f \n", temp[0]);
         #endif	
+    }
+
+    template <typename TDevice>
+    void MDNLayer<TDevice>::getOutput(const int timeStep, const real_t para)
+    {
+	// for frame by frame, we always assume that parameter and output should be generated
+	if (para < -3.0){
+	    throw std::runtime_error("mdn_samplePara can't be less than -2.0");
+	}else if (para > -1.50){
+	    if (timeStep == 0)
+		this->m_mdnParaVec.resize(this->m_mdnParaDim *
+					  this->precedingLayer().curMaxSeqLength() *
+					  this->precedingLayer().parallelSequences(), 0.0);
+
+	    BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
+		mdnUnit->getOutput(timeStep, ((para>0)?(para):(1.0)), (this->_targets()));
+		mdnUnit->getParameter(timeStep, helpers::getRawPointer(this->m_mdnParaVec));
+	    }
+	}else{
+	    throw std::runtime_error("Frame-wise EM generation is not implemented");
+	    // not implememented for EM generation
+	}
     }
     
     template <typename TDevice>
@@ -828,6 +920,55 @@ namespace layers {
 	return Layer<TDevice>::getCurrTrainingEpoch();
     }
 
+    template <typename TDevice>
+    const std::string& MDNLayer<TDevice>::layerAddInfor(const int opt) const
+    {
+        static std::string s;
+        if (s == "" && opt==1){
+	    if (m_secondOutputOpt.size()<1 || m_secondOutputOpt.size() != m_mdnUnits.size())
+		throw std::runtime_error("Feedback is invalid");
+	    	    
+            std::ostringstream Convert;
+	    Convert << m_secondOutputDim << "_";
+	    s = Convert.str();
+	}else
+	    s = "";
+        return s;
+    }
+
+    template <typename TDevice>
+    MDNLayer<TDevice>::real_vector& MDNLayer<TDevice>::secondOutputs()
+    {
+	return this->m_secondOutput;
+    }
+
+    template <typename TDevice>
+    void MDNLayer<TDevice>::retrieveFeedBackData()
+    {
+	int dimStart = 0;
+	int cnt      = 0;
+	
+	BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
+	    mdnUnit->fillFeedBackData(this->m_secondOutput,  m_secondOutputDim,  dimStart,
+				      this->_targets());
+	    dimStart += mdnUnit->feedBackDim();
+	    cnt++;
+	}
+    }
+    
+    template <typename TDevice>
+    void MDNLayer<TDevice>::retrieveFeedBackData(const int timeStep)
+    {
+	int dimStart = 0;
+	int cnt      = 0;
+	BOOST_FOREACH (boost::shared_ptr<MDNUnit<TDevice> > &mdnUnit, m_mdnUnits){
+	    mdnUnit->fillFeedBackData(this->m_secondOutput,  m_secondOutputDim,  dimStart,
+				      this->_targets(), timeStep);
+	    dimStart += mdnUnit->feedBackDim();
+	    cnt++;
+	}
+    }
+    
     template class MDNLayer<Cpu>;
     template class MDNLayer<Gpu>;
 

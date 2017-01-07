@@ -175,6 +175,11 @@ namespace layers {
 	if(m_dataType != KLDOUTPUTDATATYPE_LOG_UNI && m_dataType != KLDOUTPUTDATATYPE_LINEAR_UNI) {
 	    printf("Please specify --targetDataType");
 	    throw std::runtime_error(std::string("Only log (2) and linear (1) data for KLD layer"));
+	}else{
+	    if (m_dataType == KLDOUTPUTDATATYPE_LOG_UNI)
+		printf("Target Data type : log data");
+	    else
+		printf("Target Data type : linear data");
 	}
 	
 	if (config.datamvPath().size()<1){

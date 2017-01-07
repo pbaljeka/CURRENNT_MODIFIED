@@ -58,6 +58,7 @@
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/iterator/counting_iterator.h>
 
+#include <sstream>
 #include <fstream>
 #include <cmath>
 
@@ -87,18 +88,42 @@ namespace {
     /******************************************
      Utilities
     ******************************************/
+    // copy segment
+    struct CopyPart
+    {
+	real_t *source;
+	real_t *target;
+
+	int srcDim;
+	int srcS;     // the first dimension to be copied in source
+
+	int copyDim;  // the dim of segment to be copied
+
+	int tarDim;
+	int tarS;     // the first dimension to store the first dimension from source
+	__host__ __device__ void operator() (const thrust::tuple<real_t&, int> &t) const
+	{
+	    int outputIdx = t.get<1>();
+	    int timeIdx   = outputIdx / copyDim;
+	    int dimIdx    = outputIdx % copyDim;
+	    target[timeIdx * tarDim + tarS + dimIdx] = source[timeIdx * srcDim + srcS + dimIdx];
+	}
+    };
+    
     
     // copy the data from t.get<0> to the memory block started from Output 
     struct CopySimple
     {
 	real_t *Output;           // output address to store data
 	const char *patTypes;     // sentence termination check
+	int paraDim;
 
         __host__ __device__ void operator() (const thrust::tuple<real_t&, int> &t) const
         {
             // unpack the tuple
             int outputIdx = t.get<1>();
-	    if (patTypes[outputIdx] == PATTYPE_NONE)
+	    int timeIdx   = outputIdx / paraDim;
+	    if (patTypes[timeIdx] == PATTYPE_NONE)
                 return;
 
             // store the result
@@ -110,9 +135,10 @@ namespace {
     {
 	real_t *Output;           // output address to store data
 	real_t *in;
-        __host__ __device__ void operator() (const int &t) const
+        __host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
         {
-            *(Output+t) = *(in + t);
+	    int idx = t.get<1>();
+            Output[idx] = in[idx];
         }
     };
     
@@ -357,7 +383,7 @@ namespace {
 	const real_t *targets;  // targets data
 	
 	// from 1 to timesteps * para_dim
-	__host__ __device__ real_t operator() (const thrust::tuple<real_t, int> &t) const
+	__host__ __device__ real_t operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
 	    
 	    int outputIdx = t.get<1>();  // index
@@ -427,29 +453,59 @@ namespace {
     // Definition for the softmax Errors
     struct ComputeCrossEntropyErrorFn
     {
-        int layerSize;
-	int layerSizeOut;
-	int startDOut;
+        int     layerSize;
+	int     layerSizeOut;
+	int     startDOut;
+	int     accessBound;  //
+
+	real_t *outputBuff;   // save the results here
 	real_t *output;       // targets data
-	const real_t *prob;   // mdn parameter (softmax)
-
+	real_t *prob;   // mdn parameter (softmax)
+	
 	// from 1 to timesteps
-        __host__ __device__ real_t operator() (const int outputIdx) const
+        __host__ __device__ void operator() (const thrust::tuple<real_t&, const int&> &values) const
         {
+	    const int outputIdx = values.get<1>();
+	    
+	    int Idx = (outputIdx * layerSize +
+		       (int)(*(output + (outputIdx * layerSizeOut + startDOut))));
 
-	    real_t *targetClass = (output + (outputIdx*layerSizeOut+startDOut));
 	    // calculate the CEE
-            if (targetClass < 0)
-                return 0;
-            else {
-                int Idx    = outputIdx * layerSize + (int)(*targetClass);
-                real_t targetProb = helpers::max(helpers::NumericLimits<real_t>::min(), 
-						 prob[Idx]);
-                return -1*log(targetProb);
+            if (Idx < accessBound && Idx >=0){
+                real_t targetProb = helpers::max(helpers::NumericLimits<real_t>::min(), prob[Idx]);
+		values.get<0>() = -1*log(targetProb);
+	    }else{
+                values.get<0>() = 0.0;
             }
         }
     };
-    
+
+    // Definition for the softmax Errors
+    struct setOneHotVectorSoftmax
+    {
+	real_t *source;
+	int srcDim;
+	int srcS;
+
+	real_t *buffer;
+	int bufDim;
+	int bufS;
+
+	int paraDim;
+	// from 1 to timesteps
+        __host__ __device__ void operator() (const thrust::tuple<real_t&, const int&> &values) const
+        {
+	    const int outputIdx = values.get<1>() / paraDim;
+	    const int dimIdx    = values.get<1>() % paraDim;
+	    
+	    int targetDimIdx = (int)(source[(outputIdx * srcDim + srcS)]);
+	    if (dimIdx== targetDimIdx)
+		buffer[outputIdx * bufDim + bufS + dimIdx] = 1.0;
+	    else
+		buffer[outputIdx * bufDim + bufS + dimIdx] = 0.0;
+        }
+    };
+
     // Definition for the back-propagation of softmax
     struct ComputeSoftMaxBP
     {
@@ -465,16 +521,16 @@ namespace {
 	const char *patTypes; 
 
 	// from 1 to timesteps * softmax class number
-	__host__ __device__ void operator() (const int outputIdx) const
+	__host__ __device__ real_t operator() (const int outputIdx) const
 	{
 
 	    // timeStep: which frame is it?
 	    // dimStep:  which dimension in the NN output side this frame ?
 	    const int timeStep = outputIdx / paraDim;
 	    const int dimStep  = outputIdx % paraDim;
-	    
+		
 	    if (patTypes[timeStep] == PATTYPE_NONE)
-		return;
+		return 0.0;
 
 	    // target data (1-dimensional data)
 	    const real_t *data = targetData + (layerSizeOut * timeStep) + startDOut;
@@ -487,7 +543,9 @@ namespace {
 	    
 	    // calculate the gradient
 	    // note: we assume the target data is a real number that has not been normalized
-	    *(errors+pos_error) = (hitflag)?(-1+(*probptr)):((*probptr));
+	    errors[pos_error] = (hitflag)?(-1+(*probptr)):((*probptr));
+	    //return (hitflag)?(-1+(*probptr)):((*probptr));
+	    return 0.0;
 
 	}
     };
@@ -773,9 +831,10 @@ namespace {
 	bool      tieVar;
 
 	// from 1 to timesteps * num_mixture
-	__host__ __device__ void operator() (const int idx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
-	    
+
+	    const int idx = t.get<1>();
 	    int temp      = idx  % (featureDim * mixNum); 
 	    int featIndex = temp %  featureDim; 
 	    int timeStep  = idx  / (featureDim * mixNum);
@@ -889,9 +948,9 @@ namespace {
 	bool      tieVar;
 
 	// from 1 to timesteps * num_mixture
-	__host__ __device__ void operator() (const int idx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
-	    
+	    int idx       = t.get<1>();
 	    int temp      = idx % (featureDim * mixNum); 
 	    int featIndex = temp % featureDim; 
 	    int mixIndex  = temp / featureDim;
@@ -1043,12 +1102,13 @@ namespace {
 
 	bool    flagnegative;       // whether multiply -1
 
-	__host__ __device__ void operator() (const int dimIdx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
 	    // assume weightCoef1 and weightCoef2 are initilized as zero
 	    // if backOrder == 0 in back-propagation stage (1-order AR)
 	    //    only need to multiply the (1-tanh(alpha)^2)
 	    // Note: backOrder == this->backOrder -1
+	    int dimIdx = t.get<1>();
 	    if (backOrder>0){
 		// for n == 1
 		weightCoef1[dimIdx] = 1;
@@ -1107,13 +1167,13 @@ namespace {
 	bool    flagnegative;       // whether multiply -1
 	bool    aRealPole;
 	
-	__host__ __device__ void operator() (const int dimIdx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
 	    // assume weightCoef1 and weightCoef2 are initilized as zero
 	    // if casOrder == 0 in back-propagation stage (2nd order AR)
 	    //    only need to multiply the (1-tanh(alpha)^2)
 	    //    
-	    
+	    int dimIdx = t.get<1>();
 	    if (casOrder>0){
 		
 		// for k == 1, the first filter
@@ -1195,9 +1255,9 @@ namespace {
 	real_t *weightPtr;
 	real_t *weightBuff;
 	
-	__host__ __device__ void operator() (const int idx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
-	    
+	    const int idx = t.get<1>();
 	    int featIndex = idx % featureDim; 
 	    int temp      = idx / featureDim;  
 	    int orIndex1  = temp % (backOrder-coefNum); // 
@@ -1245,8 +1305,9 @@ namespace {
 	real_t *weightBuff;     // pointer to the graident w.r.t to pole of cascade AR
 	real_t *tempResult;     // to store the results
 	
-	__host__ __device__ void operator() (const int idx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
+	    const int idx = t.get<1>();
 	    
 	    int featIndex = idx % featureDim; 
 	    int orIndex1  = idx / featureDim;
@@ -1275,9 +1336,9 @@ namespace {
 	
 	bool    aRealPole;
 	
-	__host__ __device__ void operator() (const int idx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
-	    
+	    const int idx = t.get<1>();
 	    int featIndex = idx % featureDim;     // dimension of the feature
 	    int filterIdx = idx / featureDim; 
 	    	    
@@ -1331,8 +1392,9 @@ namespace {
 	int     featureDim;     // dimension of the feature vector
 	real_t *gradients;      
 
-	__host__ __device__ void operator() (const int idx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
+	    const int idx = t.get<1>();
 	    if (keepGradient < 0 || keepGradient == (idx / featureDim)){
 		
 	    }else{
@@ -1348,8 +1410,9 @@ namespace {
 	bool    withRealPole;
 	real_t *paraMem;        // ptr to the original parameter
 	real_t *paraBuf;        // to store the transformed parameter
-	__host__ __device__ void operator() (const int idx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
+	    int idx        = t.get<1>();
 	    int paraIdx    = idx     / featDim;
 	    int filterIdx  = paraIdx / 2;
 	    
@@ -1382,7 +1445,6 @@ namespace {
 	int   featureDim;
 	bool  tieVar;
 
-	const char *patTypes;
 	real_t     *meanDis;  // where is the mixture distancen calculated by the function above
 	                      //  this memory block will save the likelihood 
 	                      //  of each mixture
@@ -1390,10 +1452,12 @@ namespace {
 	int totalTime;        // number of time steps * parallel sentence
 
 	// from 1 to timesteps
-	__host__ __device__ real_t operator() (const int timeStep) const
+	__host__ __device__ real_t operator() (const thrust::tuple<const char&, int> &t) const
 	{
+	    const int timeStep = t.get<1>();
+	    const char patType = t.get<0>();
 	    
-	    if (patTypes[timeStep] == PATTYPE_NONE)
+	    if (patType == PATTYPE_NONE)
 		return 0;
 	    
 	    // point to the mixture distance calculated above
@@ -1460,9 +1524,9 @@ namespace {
 	int totalTime;   //
 
 	// from 1 to timesteps * numMixture 
-	__host__ __device__ void operator() (const int outputIdx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
-	    
+	    const int outputIdx = t.get<1>();
 	    const int timeStep = outputIdx / mixture_num;
 	    const int mixtureI = (outputIdx % mixture_num);
 
@@ -1515,9 +1579,9 @@ namespace {
 	int totalTime;         //
 
 	// from 1 to timesteps * numMixture*(featureDim) 
-	__host__ __device__ void operator() (const int outputIdx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
-	    
+	    const int outputIdx = t.get<1>();
 	    const int timeStep = outputIdx / (mixture_num * featureDim);
 
 	    if (patTypes[timeStep] == PATTYPE_NONE)
@@ -1604,9 +1668,9 @@ namespace {
 	real_t *varBuff;
 
 	// from 1 to timesteps * numMixture*(featureDim) 
-	__host__ __device__ void operator() (const int timeStep) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
-	    
+	    const int timeStep = t.get<1>();
 	    if (patTypes[timeStep] == PATTYPE_NONE)
 		return;
 	    
@@ -1774,9 +1838,9 @@ namespace {
 	const real_t *prob;   // mdn parameter (softmax)
 
 	// from 1 to timesteps
-        __host__ __device__ void operator() (const int outputIdx) const
+        __host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
         {
-
+	    int     outputIdx   = t.get<1>();
 	    real_t *targetClass = (output + (outputIdx*layerSizeOut+startDOut));
 	    
 	    real_t temp = 0.0;	    
@@ -1790,7 +1854,29 @@ namespace {
 	    }
         }
     };
-    
+
+    struct GetParameterSoftmax
+    {
+	int NNOutputSize;
+	int paraDim;
+	int startD;
+	int endD;
+	const char *patTypes;
+	real_t *NNOutput;
+
+        __host__ __device__ void operator() (const thrust::tuple<real_t&, int> &t) const
+        {
+	    int outputIdx  = t.get<1>();
+	    real_t prob    = t.get<0>();
+	    
+	    int timestep   = outputIdx / paraDim;
+	    int dimIdx     = outputIdx % paraDim;
+
+	    real_t *data = NNOutput + (timestep * NNOutputSize + dimIdx) + startD;
+	    *data = prob;
+        }
+    };
+
     struct SamplingMixture
     {
 	int featureDim;
@@ -1859,8 +1945,9 @@ namespace {
 	bool tieVar;
 
 	// from timesteps * featureDim
-	__host__ __device__ void operator() (const int timeStep) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
+	    const int timeStep = t.get<1>();
 	    
 	    if (patTypes[timeStep] == PATTYPE_NONE)
 		return;
@@ -1949,8 +2036,9 @@ namespace {
 	int         totalTime;    // current max time * number of parallel sentence
 
 	// from 1 to timesteps
-	__host__ __device__ void operator() (const int timeStep) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
+	    int timeStep = t.get<1>();
 	    
 	    if (patTypes[timeStep] == PATTYPE_NONE)
 		return;
@@ -1992,8 +2080,9 @@ namespace {
 	real_t *targets;
 	const char *patTypes;
 	
-	__host__ __device__ void operator() (const int idx) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
 	{
+	    int idx      = t.get<1>();
 	    int timeStep = idx / (featureDim);
 	    int dimOutput= idx % (featureDim);
 
@@ -2141,7 +2230,7 @@ namespace layers {
     template <typename TDevice>
     MDNUnit<TDevice>::MDNUnit(int startDim, int endDim, int startDimOut, int endDimOut, 
 			      int type, int paraDim, Layer<TDevice> &precedingLayer,
-			      int outputSize, const int trainable)
+			      int outputSize, const int trainable, const int feedBackOpt)
 	: m_startDim        (startDim)
 	, m_endDim          (endDim)
 	, m_type            (type)
@@ -2152,10 +2241,13 @@ namespace layers {
 	, m_layerSizeIn     (precedingLayer.size())
 	, m_layerSizeTar    (outputSize)
 	, m_trainable       (trainable)
+	, m_feedBackType    (feedBackOpt)
     {
 	// initilize the parameter vec
 	int n = m_precedingLayer.patTypes().size();
-	m_paraVec.resize(m_paraDim*n, 0.0);
+	m_paraVec.resize(m_paraDim * n, 0.0);
+	
+	m_oneVector.resize(m_paraDim * (n+1), 1.0);
 	
 	/*
 	 here, I assume the each dimension of the same kind of parameter 
@@ -2263,17 +2355,46 @@ namespace layers {
 	return m_currTrainingEpoch;
     }
 
+    template <typename TDevice>
+    const std::string& MDNUnit<TDevice>::MDNUnitInfor(const int opt)
+    {
+	static std::string s;
+	s = "";
+	return s;
+    }
 
+    template <typename TDevice>
+    void MDNUnit<TDevice>::fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+					    const int dimStart, real_vector &targets)
+    {	
+    }
+
+    template <typename TDevice>
+    void MDNUnit<TDevice>::fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+					    const int dimStart, real_vector &targets,
+					    const int timeStep)
+    {	
+    }
+
+    template <typename TDevice>
+    int MDNUnit<TDevice>::feedBackDim()
+    {
+	return m_endDimOut - m_startDimOut;
+    }
+
+	
+    
     /********************************************************
      MDNUnit_sigmoid Definition
     *******************************************************/
     template <typename TDevice>
     MDNUnit_sigmoid<TDevice>::MDNUnit_sigmoid(
 	int startDim, int endDim, int startDimOut, int endDimOut, int type, 
-	Layer<TDevice> &precedingLayer, int outputSize, const int trainable)
+	Layer<TDevice> &precedingLayer, int outputSize, const int trainable,
+	const int feedBackOpt)
 	: MDNUnit<TDevice>(startDim, endDim, startDimOut, endDimOut, 
 			   type, (endDim - startDim), precedingLayer,
-			   outputSize, trainable)
+			   outputSize, trainable, feedBackOpt)
     {
 	// nothing else to be initialized
     }
@@ -2381,6 +2502,28 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void MDNUnit_sigmoid<TDevice>::computeForward(const int timeStep)
+    {
+	// sigmoid, o_i_g = sigmoid(a_i_g), where a_i_g is the output of the previous hidden layer
+	{{
+		internal::ComputeSigmoid fn;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.startD       = this->m_startDim;
+		fn.endD         = this->m_endDim;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNoutput     = helpers::getRawPointer(this->m_precedingLayer.outputs());
+		
+		int is = timeStep * this->m_precedingLayer.parallelSequences() * this->m_paraDim;
+		int ie =       is + this->m_precedingLayer.parallelSequences() * this->m_paraDim;
+		thrust::transform(
+		   thrust::counting_iterator<int>(0) + is,
+		   thrust::counting_iterator<int>(0) + ie,
+		   this->m_paraVec.begin() + is,
+		   fn);
+	}}	    
+    }
+
+    template <typename TDevice>
     void MDNUnit_sigmoid<TDevice>::getEMOutput(const real_t para, real_vector &targets)
     {	
 	// no EM (no mixture at all), just sampling 
@@ -2410,6 +2553,33 @@ namespace layers {
 		         thrust::make_zip_iterator(
 			     thrust::make_tuple(this->m_paraVec.begin()+n, 
 						thrust::counting_iterator<int>(0)+n)),
+			 fn);
+	}}
+    }
+
+    template <typename TDevice>
+    void MDNUnit_sigmoid<TDevice>::getOutput(const int timeStep, 
+					     const real_t para, real_vector &targets)
+    {
+	// Here, probability p(1) is directly used as output
+	// sampling output
+	{{
+		internal::SamplingSigmoid fn;
+		fn.NNTargetSize = this->m_layerSizeTar;
+		fn.startDTarget = this->m_startDimOut;
+		fn.endDTarget   = this->m_endDimOut;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNTarget     = helpers::getRawPointer(targets); 
+
+		int fs = timeStep * this->m_precedingLayer.parallelSequences() * this->m_paraDim;
+		int fe = fs       + this->m_precedingLayer.parallelSequences() * this->m_paraDim;
+		thrust::for_each(
+			 thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+fs, 
+						thrust::counting_iterator<int>(0)+fs)),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+fe, 
+						thrust::counting_iterator<int>(0)+fe)),
 			 fn);
 	}}
     }
@@ -2445,6 +2615,30 @@ namespace layers {
 			 fn);
 	}}
     }
+
+    template <typename TDevice>
+    void MDNUnit_sigmoid<TDevice>::getParameter(const int timeStep, real_t *targets)
+    {
+	int fs = timeStep * this->m_precedingLayer.parallelSequences() * this->m_paraDim;
+	int fe =       fs + this->m_precedingLayer.parallelSequences() * this->m_paraDim;
+	{{
+		internal::SamplingSigmoid fn;
+		fn.NNTargetSize = this->m_precedingLayer.size();
+		fn.startDTarget = this->m_startDim;  // position in the output parameter vector
+		fn.endDTarget   = this->m_endDim;    // position in the output parameter vector
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNTarget     = targets; 
+		thrust::for_each(
+			 thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+fs, 
+						thrust::counting_iterator<int>(0)+fs)),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+fe, 
+						thrust::counting_iterator<int>(0)+fe)),
+			 fn);
+	}}
+    }
+
 	
     template <typename TDevice>
     real_t MDNUnit_sigmoid<TDevice>::calculateError(real_vector &targets)
@@ -2474,8 +2668,7 @@ namespace layers {
 						thrust::counting_iterator<int>(0)+n)),
 			 fn,
 			 (real_t)0,
-			 thrust::plus<real_t>()
-		      );
+			 thrust::plus<real_t>());
 		
 		#ifdef DEBUG_LOCAL
 		Cpu::real_vector tmp1 = targets;
@@ -2561,16 +2754,94 @@ namespace layers {
 	
     }
 
+    template <typename TDevice>
+    void MDNUnit_sigmoid<TDevice>::fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+						    const int dimStart, real_vector &targets)
+    {
+	internal::CopyPart fn;
+	fn.target = helpers::getRawPointer(fillBuffer);
+	fn.tarDim = bufferDim;
+	fn.tarS   = dimStart;
+	
+	
+	if (this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_0 ||
+	    this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_1){
+	    fn.source = helpers::getRawPointer(targets);
+	    fn.srcDim = this->m_layerSizeTar;
+	    fn.srcS   = this->m_startDimOut;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}else{
+	    fn.source = helpers::getRawPointer(this->m_paraVec);
+	    fn.srcDim = this->m_paraDim;
+	    fn.srcS   = 0;
+	    fn.copyDim= this->m_paraDim;	    
+	}
+	
+	int n = this->m_precedingLayer.curMaxSeqLength();
+	n = n * this->m_precedingLayer.parallelSequences() * fn.copyDim ;
+	thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin(), 
+					   thrust::counting_iterator<int>(0))),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + n, 
+					   thrust::counting_iterator<int>(0) + n)),
+		fn);
+    }
+
+    template <typename TDevice>
+    void MDNUnit_sigmoid<TDevice>::fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+					    const int dimStart, real_vector &targets,
+					    const int timeStep)
+    {
+	internal::CopyPart fn;
+	fn.target = helpers::getRawPointer(fillBuffer);
+	fn.tarDim = bufferDim;
+	fn.tarS   = dimStart;
+	
+	
+	if (this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_0){
+	    fn.source = helpers::getRawPointer(this->m_paraVec);
+	    fn.srcDim = this->m_paraDim;
+	    fn.srcS   = 0;
+	    fn.copyDim= this->m_paraDim;	    
+	}else{
+	    fn.source = helpers::getRawPointer(targets);
+	    fn.srcDim = this->m_layerSizeTar;
+	    fn.srcS   = this->m_startDimOut;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}
+	
+	int ts = (timeStep * this->m_precedingLayer.parallelSequences()) * fn.copyDim;
+	int te = (ts  +      this->m_precedingLayer.parallelSequences()) * fn.copyDim;
+	
+	thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + ts, 
+					   thrust::counting_iterator<int>(0) + ts)),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + te, 
+					   thrust::counting_iterator<int>(0) + te)),
+		fn);
+    }
+
+    template <typename TDevice>
+    int MDNUnit_sigmoid<TDevice>::feedBackDim()
+    {
+	return (this->m_endDimOut - this->m_startDimOut);
+    }
+
     /********************************************************
      MDNUnit_softmax
     *******************************************************/
     template <typename TDevice>
     MDNUnit_softmax<TDevice>::MDNUnit_softmax(
 	int startDim, int endDim, int startDimOut, int endDimOut, int type, 
-	Layer<TDevice> &precedingLayer, int outputSize, const int trainable)
+	Layer<TDevice> &precedingLayer, int outputSize, const int trainable,
+	const int feedBackOpt)
         : MDNUnit<TDevice>(startDim, endDim, startDimOut, endDimOut, 
 			   type, endDim-startDim, precedingLayer,
-			   outputSize, trainable)
+			   outputSize, trainable, feedBackOpt)
     {   
 	// special strategy for vec is unecessary
 	m_offset.resize(this->m_precedingLayer.patTypes().size(), 0.0);
@@ -2739,6 +3010,73 @@ namespace layers {
         }}
     }
 
+
+    template <typename TDevice>
+    void MDNUnit_softmax<TDevice>::computeForward(const int timeStep)
+    {
+	int ts = timeStep * this->m_precedingLayer.parallelSequences();
+	int te =       ts + this->m_precedingLayer.parallelSequences();
+
+	// calculate the offset 
+	{{
+		internal::CalculateOffsetFn fn;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.startD       = this->m_startDim;
+		fn.endD         = this->m_endDim;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNoutputs    = helpers::getRawPointer(this->m_precedingLayer.outputs());
+		thrust::transform(thrust::counting_iterator<int>(0) + ts, 
+				  thrust::counting_iterator<int>(0) + te,
+				  this->m_offset.begin() + ts, fn);
+	}}	    
+	
+	// calculate the Exp
+	{{
+		internal::CalculateExpFn fn;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.startD    = this->m_startDim;
+		fn.endD      = this->m_endDim;
+		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNOutput    = helpers::getRawPointer(this->m_precedingLayer.outputs());
+		fn.offset    = helpers::getRawPointer(this->m_offset);
+		thrust::transform(thrust::counting_iterator<int>(0) + ts * this->m_paraDim,
+				  thrust::counting_iterator<int>(0) + te * this->m_paraDim,
+				  this->m_paraVec.begin()           + ts * this->m_paraDim, fn);
+	}}
+	
+	// sum up
+	{{
+		internal::SumUpOutputsFn fn;
+		fn.dimSize = this->m_paraDim;
+		fn.outputs = helpers::getRawPointer(this->m_paraVec);
+		thrust::for_each(
+		   thrust::make_zip_iterator(
+				thrust::make_tuple(this->m_offset.begin() + ts,  
+						   thrust::counting_iterator<int>(0)+ts)),
+		   thrust::make_zip_iterator(
+				thrust::make_tuple(this->m_offset.begin() + te,  
+						   thrust::counting_iterator<int>(0)+te)),
+		   fn);
+	}}
+
+	// normalize
+        {{
+            internal::NormalizeOutputsFn fn;
+            fn.layerSize = this->m_paraDim;
+            fn.normFacts = helpers::getRawPointer(this->m_offset);
+            thrust::for_each(
+		thrust::make_zip_iterator(
+		   thrust::make_tuple(this->m_paraVec.begin() + ts*this->m_paraDim,
+				      thrust::counting_iterator<int>(0)+ts*this->m_paraDim)),
+                thrust::make_zip_iterator(
+		   thrust::make_tuple(this->m_paraVec.begin() + te*this->m_paraDim, 
+				      thrust::counting_iterator<int>(0)+te*this->m_paraDim)),
+                fn);
+        }}
+
+    }
+
+
     template <typename TDevice>
     void MDNUnit_softmax<TDevice>::getEMOutput(const real_t para,real_vector &targets)
     {
@@ -2759,12 +3097,41 @@ namespace layers {
 	    n = n*this->m_precedingLayer.parallelSequences();
 		
 	    thrust::for_each(
-		  thrust::counting_iterator<int>(0),
-		  thrust::counting_iterator<int>(0)+n,
-		  fn);
-
+		thrust::make_zip_iterator(
+		   thrust::make_tuple(this->m_paraVec.begin(),
+				      thrust::counting_iterator<int>(0))),
+		thrust::make_zip_iterator(
+		   thrust::make_tuple(this->m_paraVec.begin()+n,
+				      thrust::counting_iterator<int>(0)+n)),
+		fn);
 	}}
 	
+    }
+
+    template <typename TDevice>
+    void MDNUnit_softmax<TDevice>::getOutput(const int timeStep, 
+					     const real_t para,real_vector &targets)
+    {
+	{{    
+	    internal::SamplingSoftmax fn;
+	    fn.paradim = this->m_paraDim;
+	    fn.startDOut = this->m_startDimOut;
+	    fn.output    = helpers::getRawPointer(targets);
+	    fn.prob      = helpers::getRawPointer(this->m_paraVec);
+	    fn.layerSizeOut = this->m_layerSizeTar;
+	    
+	    int fs = timeStep * this->m_precedingLayer.parallelSequences();
+	    int fe = fs       + this->m_precedingLayer.parallelSequences();
+
+	    thrust::for_each(
+		thrust::make_zip_iterator(
+		   thrust::make_tuple(this->m_paraVec.begin()+fs,
+				      thrust::counting_iterator<int>(0)+fs)),
+		thrust::make_zip_iterator(
+		   thrust::make_tuple(this->m_paraVec.begin()+fe,
+				      thrust::counting_iterator<int>(0)+fe)),
+		fn);
+	}}
     }
 
     template <typename TDevice>
@@ -2772,9 +3139,16 @@ namespace layers {
     {
 	// copy directly
 	{{
-		internal::CopySimple fn;
-		fn.Output   = targets;
-		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		// 
+		internal::GetParameterSoftmax fn;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.paraDim      = this->m_paraDim;
+		fn.startD       = this->m_startDim;
+		fn.endD         = this->m_endDim;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNOutput     = targets;
+
+
 		int n =this->m_precedingLayer.curMaxSeqLength();
 		n = n*this->m_precedingLayer.parallelSequences();
 		n = n*this->m_paraDim;
@@ -2790,36 +3164,63 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void MDNUnit_softmax<TDevice>::getParameter(const int timeStep, real_t *targets)
+    {
+	int fs = timeStep * this->m_precedingLayer.parallelSequences() * this->m_paraDim;
+	int fe =       fs + this->m_precedingLayer.parallelSequences() * this->m_paraDim;	
+	{{
+		internal::GetParameterSoftmax fn;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.paraDim      = this->m_paraDim;
+		fn.startD       = this->m_startDim;
+		fn.endD         = this->m_endDim;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNOutput     = targets;
+		thrust::for_each(
+			 thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+fs, 
+						thrust::counting_iterator<int>(0)+fs)),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+fe, 
+						thrust::counting_iterator<int>(0)+fe)),
+			 fn);
+	}}
+    }
+
+    template <typename TDevice>
     real_t MDNUnit_softmax<TDevice>::calculateError(real_vector &targets)
     {   
 	real_t tmp=0.0;
 	{{    
 	    internal::ComputeCrossEntropyErrorFn fn;
-	    fn.layerSize = this->m_paraDim;
-	    fn.startDOut = this->m_startDimOut;
-	    fn.output    = helpers::getRawPointer(targets);
-	    fn.prob      = helpers::getRawPointer(this->m_paraVec);
+	    fn.layerSize    = this->m_paraDim;
+	    fn.startDOut    = this->m_startDimOut;
 	    fn.layerSizeOut = this->m_layerSizeTar;
-	    
+	    fn.accessBound  = this->m_paraVec.size();
+	    fn.output       = helpers::getRawPointer(targets);
+	    fn.prob         = helpers::getRawPointer(this->m_paraVec);
+	    fn.outputBuff   = helpers::getRawPointer(this->m_offset);
 	    int n = this->m_precedingLayer.curMaxSeqLength();
 	    n = n*this->m_precedingLayer.parallelSequences();
 	    
-	    /*Cpu::real_vector temp1 = targets;
-	    Cpu::real_vector temp2 = this->m_paraVec;
-	    for (int i = 0; i<n; i++){
-		int tarclass = temp1[i * fn.layerSizeOut + fn.startDOut];
-		int idx = i * fn.layerSize + tarclass;
-		tmp += -1*internal::safeLog(temp2[idx]);
-		}*/
+	    thrust::for_each(
+		thrust::make_zip_iterator(thrust::make_tuple(this->m_offset.begin(),
+							     thrust::counting_iterator<int>(0))),
+		thrust::make_zip_iterator(thrust::make_tuple(this->m_offset.begin()+n,
+							     thrust::counting_iterator<int>(0)+n)),
+		fn);
+	    tmp = thrust::reduce(this->m_offset.begin(),this->m_offset.begin()+n);
 
-	    tmp = thrust::transform_reduce(
-		  thrust::counting_iterator<int>(0),
-		  thrust::counting_iterator<int>(0)+n,
-		  fn,
-		  (real_t)0.0,
-		  thrust::plus<real_t>()
-		  );
-
+	    /*
+	    thrust::for_each(thrust::counting_iterator<int>(0),
+			     thrust::counting_iterator<int>(0)+n,
+			     fn);
+	    helpers::Matrix<TDevice> prob(&this->m_offset, 1, n);
+	    helpers::Matrix<TDevice> ones(&this->m_oneVector, n, 1);
+	    helpers::Matrix<TDevice> resu(&this->m_oneVector, 1, 1, n);
+	    resu.assignProduct(prob, false, ones, false);
+	    m_tmpProb = this->m_oneVector;
+	    tmp = m_tmpProb[n];*/
 	}}
 	return tmp;
     }
@@ -2836,6 +3237,7 @@ namespace layers {
 		fn.layerSizeOut = this->m_layerSizeTar;
 		fn.layerSizeIn  = this->m_precedingLayer.size();
 
+
 		fn.errors      = helpers::getRawPointer(this->m_precedingLayer.outputErrors());
 		fn.patTypes    = helpers::getRawPointer(this->m_precedingLayer.patTypes());
 		fn.targetData  = helpers::getRawPointer(targets);
@@ -2844,17 +3246,129 @@ namespace layers {
 		int n =this->m_precedingLayer.curMaxSeqLength();
 		n = n*this->m_precedingLayer.parallelSequences();
 		n = n*this->m_paraDim;
-		
-		thrust::for_each(
-				 thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+n,
-				 fn);
+		real_vector tmp(n, -1.0);
+		thrust::transform(thrust::counting_iterator<int>(0),
+				  thrust::counting_iterator<int>(0)+n,
+				  tmp.begin(),
+				  fn);
 	    
 	}}
     }
 
+    template <typename TDevice>
+    const std::string& MDNUnit_softmax<TDevice>::MDNUnitInfor(const int opt)
+    {
+	static std::string s;
+	if (opt ==1 && s.empty()){
+	    std::ostringstream Convert;
+	    Convert << this->m_startDim << "_" << this->m_startDimOut << "_" << this->m_paraDim;
+	    s = Convert.str();
+	}
+	return s;
+    }
 
 
+    template <typename TDevice>
+    void MDNUnit_softmax<TDevice>::fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+						    const int dimStart, real_vector &targets)
+    {
+	
+	if (this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_0 ||
+	    this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_1){
+	    /* Fatal error:
+	       setOneHotVectorSoftmax forgets to set other dimensions to zero
+	     */
+	    internal::setOneHotVectorSoftmax fn;
+	    fn.source  = helpers::getRawPointer(targets);
+	    fn.srcDim  = this->m_layerSizeTar;
+	    fn.srcS    = this->m_startDimOut;
+	    fn.buffer  = helpers::getRawPointer(fillBuffer);
+	    fn.bufDim  = bufferDim;
+	    fn.bufS    = dimStart;
+	    fn.paraDim = this->m_paraDim;
+	    int n = this->m_precedingLayer.curMaxSeqLength();
+	    n = n * this->m_precedingLayer.parallelSequences() * this->m_paraDim;
+	    thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin(), 
+					   thrust::counting_iterator<int>(0))),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + n, 
+					   thrust::counting_iterator<int>(0) + n)),
+		fn);
+	}else{
+	    internal::CopyPart fn;
+	    fn.target = helpers::getRawPointer(fillBuffer);
+	    fn.tarDim = bufferDim;
+	    fn.tarS   = dimStart;
+	    fn.source = helpers::getRawPointer(this->m_paraVec);
+	    fn.srcDim = this->m_paraDim;
+	    fn.srcS   = 0;
+	    fn.copyDim= this->m_paraDim;
+	    int n = this->m_precedingLayer.curMaxSeqLength();
+	    n = n * this->m_precedingLayer.parallelSequences() * fn.copyDim ;
+	    thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin(), 
+					   thrust::counting_iterator<int>(0))),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + n, 
+					   thrust::counting_iterator<int>(0) + n)),
+		fn);
+	}
+    }
+
+    template <typename TDevice>
+    void MDNUnit_softmax<TDevice>::fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+					    const int dimStart, real_vector &targets,
+					    const int timeStep)
+    {
+	int ts = timeStep * this->m_precedingLayer.parallelSequences();
+	int te = ts + this->m_precedingLayer.parallelSequences();
+	
+	if (this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_0){
+	    internal::CopyPart fn;
+	    fn.target = helpers::getRawPointer(fillBuffer);
+	    fn.tarDim = bufferDim;
+	    fn.tarS   = dimStart;
+	    fn.source = helpers::getRawPointer(this->m_paraVec);
+	    fn.srcDim = this->m_paraDim;
+	    fn.srcS   = 0;
+	    fn.copyDim= this->m_paraDim;
+	    
+	    thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + ts*fn.copyDim, 
+					   thrust::counting_iterator<int>(0)+ts*fn.copyDim)),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + te*fn.copyDim, 
+					   thrust::counting_iterator<int>(0)+te*fn.copyDim)),
+		fn);
+	}else{
+	    internal::setOneHotVectorSoftmax fn;
+	    fn.source = helpers::getRawPointer(targets);
+	    fn.srcDim = this->m_layerSizeTar;
+	    fn.srcS   = this->m_startDimOut;
+	    fn.buffer = helpers::getRawPointer(fillBuffer);
+	    fn.bufDim = bufferDim;
+	    fn.bufS   = dimStart;
+	    fn.paraDim= this->m_paraDim;
+	    thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + ts * this->m_paraDim, 
+					   thrust::counting_iterator<int>(0)+ ts*this->m_paraDim)),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + te * this->m_paraDim, 
+					   thrust::counting_iterator<int>(0)+ te*this->m_paraDim)),
+		fn);
+	}
+    }
+
+    template <typename TDevice>
+    int MDNUnit_softmax<TDevice>::feedBackDim()
+    {
+	return (this->m_endDim - this->m_startDim);
+    }
     /********************************************************
      MDNUnit_mixture
     *******************************************************/
@@ -2862,10 +3376,10 @@ namespace layers {
     MDNUnit_mixture<TDevice>::MDNUnit_mixture(
 	int startDim, int endDim, int startDimOut, int endDimOut, int type, 
 	int featureDim, Layer<TDevice> &precedingLayer, int outputSize,
-	const bool tieVar, const int trainable)
+	const bool tieVar, const int trainable, const int feedBackOpt)
         : MDNUnit<TDevice>(startDim, endDim, startDimOut, endDimOut, 
 			   type, (endDim-startDim), precedingLayer,
-			   outputSize, trainable)
+			   outputSize, trainable, feedBackOpt)
 	, m_numMixture    (type) // I forget why I used type to name m_numMixture
 	, m_featureDim    (featureDim)
 	, m_varFloor      (0.0)
@@ -3185,6 +3699,135 @@ namespace layers {
 
 
     template <typename TDevice>
+    void MDNUnit_mixture<TDevice>::computeForward(const int timeStep)
+    {   
+	int ts = timeStep * this->m_precedingLayer.parallelSequences();
+	int te =       ts + this->m_precedingLayer.parallelSequences();
+
+	{{
+		internal::CalculateOffsetFn fn;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.startD       = this->m_startDim;
+		fn.endD         = this->m_startDim+this->m_numMixture;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNoutputs    = helpers::getRawPointer(this->m_precedingLayer.outputs());
+		thrust::transform(thrust::counting_iterator<int>(0) + ts,
+				  thrust::counting_iterator<int>(0) + te,
+				  this->m_offset.begin()            + ts, fn);
+	}}	    
+
+	// calculate the exp(w_k - offset) 
+	{{
+		internal::CalculateExpFn fn;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.startD    = this->m_startDim;
+		fn.endD      = this->m_startDim + this->m_numMixture;
+		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNOutput  = helpers::getRawPointer(this->m_precedingLayer.outputs());
+		fn.offset    = helpers::getRawPointer(this->m_offset);
+		thrust::transform(
+		   thrust::counting_iterator<int>(0) + ts * this->m_numMixture,
+		   thrust::counting_iterator<int>(0) + te * this->m_numMixture,
+		   this->m_paraVec.begin()           + ts * this->m_numMixture, fn);
+	}}
+
+	// sum up \sum_k exp(w_k)
+	{{
+		internal::SumUpOutputsFn fn;
+		fn.dimSize   = this->m_numMixture;
+		fn.outputs   = helpers::getRawPointer(this->m_paraVec);
+		thrust::for_each(
+		   thrust::make_zip_iterator(
+				 thrust::make_tuple(this->m_offset.begin() + ts,  
+						    thrust::counting_iterator<int>(0) + ts)),
+		   thrust::make_zip_iterator(
+				 thrust::make_tuple(this->m_offset.begin() + te,  
+						    thrust::counting_iterator<int>(0) + te)),
+		   fn);
+	}}
+	
+	// normalize
+        {{
+		internal::NormalizeOutputsFn fn;
+		fn.layerSize = this->m_numMixture;
+		fn.normFacts = helpers::getRawPointer(this->m_offset);
+		thrust::for_each(
+		    thrust::make_zip_iterator(
+			  thrust::make_tuple(
+				this->m_paraVec.begin() + ts * this->m_numMixture,
+				thrust::counting_iterator<int>(0) + ts * this->m_numMixture)),
+		    thrust::make_zip_iterator(
+			   thrust::make_tuple(
+				this->m_paraVec.begin() + te * this->m_numMixture, 
+				thrust::counting_iterator<int>(0) + te * this->m_numMixture)),
+		    fn);
+        }}
+	
+	//
+	// the mean part (unnessary to change anything. But need to copy from NN output to MDN)
+	//
+	{{
+		internal::CopyMean fn;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.featureDim   = this->m_numMixture*this->m_featureDim;
+		fn.startD       = this->m_startDim + this->m_numMixture;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNOutput     = helpers::getRawPointer(this->m_precedingLayer.outputs());
+		
+		// shift over mixture weight part
+		int shift = (this->m_precedingLayer.curMaxSeqLength() * 
+			     this->m_precedingLayer.parallelSequences() * this->m_numMixture);
+		int featS = ts * this->m_numMixture * this->m_featureDim;
+		int featE = te * this->m_numMixture * this->m_featureDim;
+		
+		thrust::for_each(
+		    thrust::make_zip_iterator(
+			  thrust::make_tuple(
+				this->m_paraVec.begin() + shift + featS,
+				thrust::counting_iterator<int>(0) + featS)),
+		    thrust::make_zip_iterator(
+                          thrust::make_tuple(
+				this->m_paraVec.begin() + shift + featE, 
+				thrust::counting_iterator<int>(0) + featE)),
+		    fn);
+		
+		//Cpu::real_vector tmptempParaVec2 = this->m_paraVec;
+		//printf("\n");
+	}}
+
+	//
+	// the variance part
+	//
+	// calculate the Exp
+	{{
+		internal::CalculateExpSimpleFnForVar fn;
+		fn.NNOutputSize =  this->m_precedingLayer.size();
+		fn.startD       =  this->m_startDim + this->m_numMixture*(1+this->m_featureDim);
+		fn.endD         = (this->m_startDim + this->m_numMixture*(1+this->m_featureDim) +
+				   this->m_numMixture * (this->m_tieVar?1:this->m_featureDim));
+		
+		fn.varFloor     = this->m_varFloor;
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.NNOutput     = helpers::getRawPointer(this->m_precedingLayer.outputs());
+
+		// total time step
+		int timeStep = this->m_precedingLayer.curMaxSeqLength();
+		timeStep     = timeStep*this->m_precedingLayer.parallelSequences();
+		
+		
+		int shift = timeStep * (this->m_numMixture*(this->m_featureDim+1));
+		int featS = ts * this->m_numMixture*(this->m_tieVar?1:this->m_featureDim);
+		int featE = te * this->m_numMixture*(this->m_tieVar?1:this->m_featureDim);
+		thrust::transform(
+		   thrust::counting_iterator<int>(0) + featS,
+		   thrust::counting_iterator<int>(0) + featE,
+		   this->m_paraVec.begin() + shift   + featS, 
+		   fn);
+	}}
+    }
+
+
+    template <typename TDevice>
     void MDNUnit_mixture<TDevice>::getEMOutput(const real_t para, real_vector &targets)
     {
 
@@ -3210,10 +3853,14 @@ namespace layers {
 		n = n * this->m_precedingLayer.parallelSequences();
 		
 		fn.totalTime = n;
-		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+n,
-				 fn
-				 );
+		thrust::for_each(
+		  thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin(),
+					   thrust::counting_iterator<int>(0))),
+		  thrust::make_zip_iterator(
+		        thrust::make_tuple(this->m_paraVec.begin()+n,
+					   thrust::counting_iterator<int>(0)+n)),
+		  fn);
 				
 		#ifdef DEBUG_LOCAL
 		Cpu::real_vector tvec1;
@@ -3248,9 +3895,13 @@ namespace layers {
 		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
 		fn.targets      = helpers::getRawPointer(targets);
 		thrust::for_each(
-				  thrust::counting_iterator<int>(0),
-				  thrust::counting_iterator<int>(0)+time,
-				  fn);
+		  thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin(),
+					   thrust::counting_iterator<int>(0))),
+		  thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin()+time,
+					   thrust::counting_iterator<int>(0)+time)),
+		  fn);
 
 		#ifdef DEBUG_LOCAL
 		Cpu::real_vector mdnPara;
@@ -3371,8 +4022,6 @@ namespace layers {
 		fn.layerSizeOut = this->m_layerSizeTar;
 		fn.tieVar       = this->m_tieVar;
 		
-
-		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
 		fn.meanDis   = helpers::getRawPointer(this->m_tmpPat);
 		fn.mdnPara   = helpers::getRawPointer(this->m_paraVec);
 
@@ -3381,11 +4030,17 @@ namespace layers {
 		
 		fn.totalTime = n;
 
-		outP = thrust::transform_reduce(thrust::counting_iterator<int>(0),
-					       thrust::counting_iterator<int>(0)+n,
-					       fn,
-					       (real_t)0.0,
-					       thrust::plus<real_t>());
+		outP = thrust::transform_reduce(
+			     thrust::make_zip_iterator(
+				  thrust::make_tuple(this->m_precedingLayer.patTypes().begin(), 
+						     thrust::counting_iterator<int>(0))),
+			     thrust::make_zip_iterator(
+				  thrust::make_tuple(this->m_precedingLayer.patTypes().begin()+n, 
+						     thrust::counting_iterator<int>(0)+n)),
+			     fn,
+			     (real_t)0.0,
+			     thrust::plus<real_t>());
+		
 		if (outP != outP){
 		    printf("\t\t Fail to converge\n");
 		}else{
@@ -3526,14 +4181,71 @@ namespace layers {
 	}}	
     }
 
+
+    template <typename TDevice>
+    void MDNUnit_mixture<TDevice>::getOutput(const int timeStep, 
+					     const real_t para,real_vector &targets)
+    {
+
+	int oneTimeStep = (this->m_precedingLayer.parallelSequences()
+			   *(this->m_endDimOut - this->m_startDimOut));
+	
+	int fs = timeStep * oneTimeStep;
+	int fe = fs       + oneTimeStep;
+	
+
+	Cpu::real_vector temp;
+	Gpu::real_vector temp2;
+	temp.reserve(oneTimeStep);
+	
+	const Configuration &config = Configuration::instance();
+
+	static boost::mt19937 *gen = NULL;
+	if (!gen) {
+	    gen = new boost::mt19937;
+	    gen->seed(config.randomSeed());
+	}
+	
+	boost::random::normal_distribution<real_t> dist(0, 1);
+	for (size_t i = 0; i < oneTimeStep; ++i)
+	    temp.push_back(dist(*gen));
+
+			
+	// copy to GPU
+	temp2 = temp;	
+	{{
+		internal::SamplingMixture fn;
+		fn.featureDim   = this->m_featureDim;
+		fn.layerSizeOut = this->m_layerSizeTar;
+		fn.startDOut    = this->m_startDimOut;
+		fn.mixtureNum   = this->m_numMixture;
+		fn.totalTime    = (int)(this->m_precedingLayer.curMaxSeqLength() * 
+					this->m_precedingLayer.parallelSequences());
+		fn.para         = para;
+		fn.paraPtr      = ( (this->m_varScale.size()>0) ?
+				    (helpers::getRawPointer(this->m_varScale)) : NULL );
+		fn.targets      = helpers::getRawPointer(targets);
+		fn.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		fn.tieVar       = this->m_tieVar;
+
+		thrust::for_each(
+  			 thrust::make_zip_iterator(
+			     thrust::make_tuple(temp2.begin()+fs, 
+						thrust::counting_iterator<int>(0)+fs)),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(temp2.begin()+fe, 
+						thrust::counting_iterator<int>(0)+fe)),
+			 fn);		
+	}}	
+    }
+
+    
+
     template <typename TDevice>
     void MDNUnit_mixture<TDevice>::getParameter(real_t *targets)
     {
-
-	//
 	{{
 		internal::GetParameterMixture fn;
-
 		int time = this->m_precedingLayer.curMaxSeqLength();
 		time = time*this->m_precedingLayer.parallelSequences();
 		
@@ -3548,9 +4260,44 @@ namespace layers {
 		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
 		fn.tieVar       = this->m_tieVar;
 
-		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+time,
-				 fn);
+		thrust::for_each(
+  		  thrust::make_zip_iterator(
+		       thrust::make_tuple(this->m_paraVec.begin(), 
+					  thrust::counting_iterator<int>(0))),
+  		  thrust::make_zip_iterator(
+		       thrust::make_tuple(this->m_paraVec.begin() + time, 
+					  thrust::counting_iterator<int>(0)+time)),
+		  fn);
+	}}
+    }
+
+    template <typename TDevice>
+    void MDNUnit_mixture<TDevice>::getParameter(const int timeStep, real_t *targets)
+    {
+	int fs = timeStep * this->m_precedingLayer.parallelSequences();
+	int fe = fs       + this->m_precedingLayer.parallelSequences();
+	{{
+		internal::GetParameterMixture fn;
+		int time = this->m_precedingLayer.curMaxSeqLength();
+		time = time*this->m_precedingLayer.parallelSequences();
+		fn.targets      = targets;
+		fn.featureDim   = this->m_featureDim;
+		fn.NNOutputSize = this->m_precedingLayer.size();
+		fn.startDimIn   = this->m_startDim;
+		fn.mixtureNum   = this->m_numMixture;
+		fn.totalTime    = time;
+		fn.targets      = targets;
+		fn.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
+		fn.tieVar       = this->m_tieVar;
+		thrust::for_each(
+  		  thrust::make_zip_iterator(
+		       thrust::make_tuple(this->m_paraVec.begin()+fs, 
+					  thrust::counting_iterator<int>(0)+fs)),
+  		  thrust::make_zip_iterator(
+		       thrust::make_tuple(this->m_paraVec.begin() + fe, 
+					  thrust::counting_iterator<int>(0)+fe)),
+		  fn);
 	}}
     }
 
@@ -3640,7 +4387,6 @@ namespace layers {
 		fn.layerSizeOut = this->m_layerSizeTar;
 		fn.tieVar       = this->m_tieVar;
 
-		fn.patTypes  = helpers::getRawPointer(this->m_precedingLayer.patTypes());
 		fn.meanDis   = helpers::getRawPointer(this->m_tmpPat);
 		fn.mdnPara   = helpers::getRawPointer(this->m_paraVec);
 
@@ -3650,11 +4396,16 @@ namespace layers {
 		fn.totalTime = n;
 
                 #ifndef DEBUG_LOCAL
-		mixError = thrust::transform_reduce(thrust::counting_iterator<int>(0),
-						    thrust::counting_iterator<int>(0)+n,
-						    fn,
-						    (real_t)0.0,
-						    thrust::plus<real_t>());
+		mixError = thrust::transform_reduce(
+			     thrust::make_zip_iterator(
+				  thrust::make_tuple(this->m_precedingLayer.patTypes().begin(), 
+						     thrust::counting_iterator<int>(0))),
+			     thrust::make_zip_iterator(
+				  thrust::make_tuple(this->m_precedingLayer.patTypes().begin()+n, 
+						     thrust::counting_iterator<int>(0)+n)),
+			     fn,
+			     (real_t)0.0,
+			     thrust::plus<real_t>());
                 #endif
 
                 #ifdef DEBUG_LOCAL
@@ -3747,10 +4498,14 @@ namespace layers {
 		
 		fn.totalTime = n;
 		n     = n * this->m_numMixture;
-		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+n,
-				 fn
-				 );
+		thrust::for_each(
+			 thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin(), 
+						thrust::counting_iterator<int>(0))),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+n, 
+						thrust::counting_iterator<int>(0)+n)),	 
+			 fn);
 
                 #ifdef DEBUG_LOCAL
 		printf("Gradient for mixture weight\n");
@@ -3809,9 +4564,14 @@ namespace layers {
 		
 		fn.totalTime = n;
 		n = n * this->m_numMixture * this->m_featureDim;
- 		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+n,
-				 fn);
+ 		thrust::for_each(
+			 thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin(), 
+						thrust::counting_iterator<int>(0))),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+n, 
+						thrust::counting_iterator<int>(0)+n)),
+			 fn);
 		
 		// For untied case, the gradients have been assigned to individual dimension
 		// no need to merge the gradients for tiedVariance
@@ -3828,8 +4588,14 @@ namespace layers {
 
 		    n =this->m_precedingLayer.curMaxSeqLength();
 		    n = n*this->m_precedingLayer.parallelSequences();		
-		    thrust::for_each(thrust::counting_iterator<int>(0),
-				     thrust::counting_iterator<int>(0)+n,
+		    thrust::for_each(
+			 thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin(), 
+						thrust::counting_iterator<int>(0))),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+n, 
+						thrust::counting_iterator<int>(0)+n)),
+			 
 				     fn2);
 		}
 		
@@ -3919,6 +4685,88 @@ namespace layers {
 	return m_tieVar; // default for all units
     }
 
+    template <typename TDevice>
+    void MDNUnit_mixture<TDevice>::fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+						    const int dimStart, real_vector &targets)
+    {
+	internal::CopyPart fn;
+	fn.target = helpers::getRawPointer(fillBuffer);
+	fn.tarDim = bufferDim;
+	fn.tarS   = dimStart;
+	
+	
+	if (this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_0 ||
+	    this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_1){
+	    fn.source = helpers::getRawPointer(targets);
+	    fn.srcDim = this->m_layerSizeTar;
+	    fn.srcS   = this->m_startDimOut;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}else{
+	    // skip the mixture weight part
+	    int shift = (this->m_precedingLayer.curMaxSeqLength() * 
+			 this->m_precedingLayer.parallelSequences() * this->m_numMixture);
+	    fn.source = helpers::getRawPointer(this->m_paraVec) + shift;
+	    fn.srcDim = (this->m_endDimOut - this->m_startDimOut);
+	    fn.srcS   = 0;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}
+	
+	int n = this->m_precedingLayer.curMaxSeqLength();
+	n = n * this->m_precedingLayer.parallelSequences() * fn.copyDim ;
+	thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin(), 
+					   thrust::counting_iterator<int>(0))),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + n, 
+					   thrust::counting_iterator<int>(0) + n)),
+		fn);
+    }
+
+    template <typename TDevice>
+    void MDNUnit_mixture<TDevice>::fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+					    const int dimStart, real_vector &targets,
+					    const int timeStep)
+    {
+	internal::CopyPart fn;
+	fn.target = helpers::getRawPointer(fillBuffer);
+	fn.tarDim = bufferDim;
+	fn.tarS   = dimStart;
+		
+	if (this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_0){
+	    // skip the mixture weight part
+	    int shift = (this->m_precedingLayer.curMaxSeqLength() * 
+			 this->m_precedingLayer.parallelSequences() * this->m_numMixture);
+	    fn.source = helpers::getRawPointer(this->m_paraVec) + shift;
+	    fn.srcDim = (this->m_endDimOut - this->m_startDimOut);
+	    fn.srcS   = 0;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}else{
+	    fn.source = helpers::getRawPointer(targets);
+	    fn.srcDim = this->m_layerSizeTar;
+	    fn.srcS   = this->m_startDimOut;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}
+	
+	int ts = (timeStep * this->m_precedingLayer.parallelSequences()) * fn.copyDim;
+	int te = (ts  +      this->m_precedingLayer.parallelSequences()) * fn.copyDim;
+	
+	thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + ts, 
+					   thrust::counting_iterator<int>(0) + ts)),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + te, 
+					   thrust::counting_iterator<int>(0) + te)),
+		fn);
+    }
+
+    template <typename TDevice>
+    int MDNUnit_mixture<TDevice>::feedBackDim()
+    {
+	return (this->m_endDimOut - this->m_startDimOut);
+    }
+
     /********************************************************
      MDNUnit_mixture_dyn Definition
     *******************************************************/
@@ -3927,10 +4775,11 @@ namespace layers {
 	int startDim,       int endDim, int startDimOut, int endDimOut,      int type, 
 	Layer<TDevice> &precedingLayer, int outputSize,  const bool tieVar, 
 	int weightStart, int weightNum, int backOrder,   const int trainable, 
-	const int dynDirection, const bool realPole, const int tanhRegOpt)
+	const int dynDirection, const bool realPole, const int tanhRegOpt,
+	const int feedBackOpt)
         : MDNUnit_mixture<TDevice>(startDim, endDim, startDimOut, endDimOut, 
 				   type, endDimOut - startDimOut, precedingLayer, 
-				   outputSize, tieVar, trainable)
+				   outputSize, tieVar, trainable, feedBackOpt)
     {
 	const Configuration &config = Configuration::instance();
 	
@@ -4079,13 +4928,10 @@ namespace layers {
 	m_weightUpdatesPtr = helpers::getRawPointer(weightsUpdate) + m_weightStart;
 	
     }
-    
-    template <typename TDevice>
-    void MDNUnit_mixture_dyn<TDevice>::computeForward()
-    {
-	// do the normal feedforward for the MDN part
-	this->MDNUnit_mixture<TDevice>::computeForward();
 
+    template <typename TDevice>
+    void MDNUnit_mixture_dyn<TDevice>::transformARParameter()
+    {
 	// This code block is obsolete
 	// Only ARRMDN over time dimension is supported
 	// Block 1025x01
@@ -4101,7 +4947,6 @@ namespace layers {
 	    // initialize m_wTransBuff as zero
 	    thrust::fill(this->m_wTransBuff.begin(), this->m_wTransBuff.end(), (real_t)0.0);
 		
-
 	    if (this->m_tanhReg == MDNARRMDN_CASECADEREAL){
 		
 		// AR with all real poles
@@ -4121,18 +4966,19 @@ namespace layers {
 		fn.tanhFactor  = NULL;
 		    
 		thrust::for_each(
-				 thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0) + this->m_featureDim,
-				 fn);
+		   thrust::make_zip_iterator(
+		     thrust::make_tuple(this->m_wTransBuff.begin(),
+					thrust::counting_iterator<int>(0))),
+		   thrust::make_zip_iterator(
+		     thrust::make_tuple(this->m_wTransBuff.begin()+ this->m_featureDim,
+					thrust::counting_iterator<int>(0)+this->m_featureDim)),
+		   fn);
 		
 		}}
-
 	    }else if (this->m_tanhReg == MDNARRMDN_CASECADECOMPLEX) {
 		// AR with complex poles
-
 		// step1. transform the parameter to the coefficients of 2nd order filter
 		{{
-			
 		    // alpha = tanh(alpha), beta = sigmoid(beta)
 		    // except the first filter when the AR order is an odd number
 		    internal::ARComplexPolesParameterTransform fn;
@@ -4144,9 +4990,13 @@ namespace layers {
 			              + m_wTransBuffParaBK;
 		    int n = this->m_featureDim * this->m_backOrder;
 		    thrust::for_each(
-				     thrust::counting_iterator<int>(0),
-				     thrust::counting_iterator<int>(0) + n,
-				     fn);
+			thrust::make_zip_iterator(
+				thrust::make_tuple(this->m_wTransBuff.begin(),
+						   thrust::counting_iterator<int>(0))),
+			thrust::make_zip_iterator(
+				thrust::make_tuple(this->m_wTransBuff.begin()+ n,
+						   thrust::counting_iterator<int>(0)+n)),
+			fn);
 		}}
 		
 		// step2. convolution to get the coefficients for a classical AR filter
@@ -4168,9 +5018,15 @@ namespace layers {
 		    fn.aRealPole   = this->m_casRealPole;
 
 		    thrust::for_each(
-				     thrust::counting_iterator<int>(0),
-				     thrust::counting_iterator<int>(0) + this->m_featureDim,
-				     fn);
+			thrust::make_zip_iterator(
+				thrust::make_tuple(
+					this->m_wTransBuff.begin(),
+					thrust::counting_iterator<int>(0))),
+			thrust::make_zip_iterator(
+				thrust::make_tuple(
+					this->m_wTransBuff.begin()+this->m_featureDim,
+					thrust::counting_iterator<int>(0)+this->m_featureDim)),
+			fn);
 		}}
 	    }
 	    
@@ -4178,7 +5034,28 @@ namespace layers {
 	    // no AR model
 	}
     }
+    
+    template <typename TDevice>
+    void MDNUnit_mixture_dyn<TDevice>::computeForward()
+    {
+	// do the normal feedforward for the MDN part
+	this->MDNUnit_mixture<TDevice>::computeForward();
+	
+	// prepare the AR parameter
+	this->transformARParameter();
+    }
 
+
+    template <typename TDevice>
+    void MDNUnit_mixture_dyn<TDevice>::computeForward(const int timeStep)
+    {
+	// do the normal feedforward for the MDN part
+	this->MDNUnit_mixture<TDevice>::computeForward(timeStep);
+	
+	// AR parameter only need to be transformed for one time
+	if (timeStep < 1)
+	    this->transformARParameter();
+    }
 	
     template <typename TDevice>
     real_t MDNUnit_mixture_dyn<TDevice>::calculateError(real_vector &targets)
@@ -4229,9 +5106,16 @@ namespace layers {
 			fn2.trainableBPos= -1;   // this is useful for mxiture_dynSqr
 		
 			int n =  this->m_totalTime * this->m_numMixture * this->m_featureDim;
-			thrust::for_each(thrust::counting_iterator<int>(0),
-					 thrust::counting_iterator<int>(0)+n,
-					 fn2);
+			thrust::for_each(
+			thrust::make_zip_iterator(
+				thrust::make_tuple(
+					this->m_paraVec.begin(),
+					thrust::counting_iterator<int>(0))),
+			thrust::make_zip_iterator(
+				thrust::make_tuple(
+					this->m_paraVec.begin() + n,
+					thrust::counting_iterator<int>(0) + n)),
+			fn2);
 		    }
 		}
 	    }}
@@ -4302,9 +5186,14 @@ namespace layers {
 		
 		int n =  this->m_backOrder  * this->m_totalTime * 
 		    this->m_numMixture * this->m_featureDim;
-		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+n,
-				 fn2);
+		thrust::for_each(
+			 thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin(), 
+						thrust::counting_iterator<int>(0))),
+		         thrust::make_zip_iterator(
+			     thrust::make_tuple(this->m_paraVec.begin()+n, 
+						thrust::counting_iterator<int>(0)+n)),
+			 fn2);
 		
 		// step2 update the gradients over time and mixtures
 		/*************************************************
@@ -4381,9 +5270,14 @@ namespace layers {
 			    
 			    // if backOrder > 1
 			    if (n > 0){
-				thrust::for_each(thrust::counting_iterator<int>(0),
-						 thrust::counting_iterator<int>(0)+n,
-						 fn);
+				thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin()+n, 
+						       thrust::counting_iterator<int>(0)+n)),
+				  fn);
 			    }
 
 			}}
@@ -4410,10 +5304,15 @@ namespace layers {
 				    2 * order * m_wTransBuffShiftToDim;
 				// 
 				fn.tanhFactor  = this->m_weightsPtr + order * this->m_featureDim;
-				thrust::for_each(thrust::counting_iterator<int>(0),
-						 thrust::counting_iterator<int>(0)+
-						 this->m_featureDim,
-						 fn);
+				thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(
+					this->m_wTransBuff.begin()+this->m_featureDim, 
+					thrust::counting_iterator<int>(0)+this->m_featureDim)),
+				  fn);
 			    }			
 			}}
 			
@@ -4428,17 +5327,26 @@ namespace layers {
 			    fn.tempResult  = helpers::getRawPointer(this->m_wTransBuff);
 			
 			    int n = this->m_featureDim * this->m_backOrder;
-			    thrust::for_each(thrust::counting_iterator<int>(0),
-					     thrust::counting_iterator<int>(0)+n,
-					     fn);
+			    thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin()+n, 
+						       thrust::counting_iterator<int>(0)+n)),
+				  fn);
 			    // copy the tempResult back into gradient buffer
 			    internal::CopySimple2 fn2;
 			    fn2.Output     = this->m_weightUpdatesPtr;
 			    fn2.in         = helpers::getRawPointer(this->m_wTransBuff);
-			    thrust::for_each(thrust::counting_iterator<int>(0),
-					     thrust::counting_iterator<int>(0) +
-					     this->m_featureDim * this->m_backOrder,
-					     fn2);
+			    thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin()+n, 
+						       thrust::counting_iterator<int>(0)+n)),	
+				  fn2);
 			}}
 
 		    // AR with complex poles
@@ -4465,9 +5373,14 @@ namespace layers {
 			    
 			    // if backOrder > 1
 			    if (n > 0){
-				thrust::for_each(thrust::counting_iterator<int>(0),
-						 thrust::counting_iterator<int>(0)+n,
-						 fn);
+				thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin()+n, 
+						       thrust::counting_iterator<int>(0)+n)),
+				  fn);
 			    }
 
 			}}
@@ -4495,10 +5408,15 @@ namespace layers {
 				    m_wTransBuffShiftToDim * 3 + 
 				    2 * order * m_wTransBuffShiftToDim;
 				 				
-				thrust::for_each(thrust::counting_iterator<int>(0),
-						 thrust::counting_iterator<int>(0)+
-						 this->m_featureDim,
-						 fn);
+				thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(
+					  this->m_wTransBuff.begin()+this->m_featureDim, 
+					  thrust::counting_iterator<int>(0)+this->m_featureDim)),
+				  fn);
 			    }			
 			}}
 
@@ -4521,18 +5439,30 @@ namespace layers {
 			    fn.aRealPole   = this->m_casRealPole;
 				
 			    int n = this->m_featureDim * this->m_casOrder;
-			    thrust::for_each(thrust::counting_iterator<int>(0),
-					     thrust::counting_iterator<int>(0)+n,
-					     fn);
+			    thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(
+					  this->m_wTransBuff.begin()+n, 
+					  thrust::counting_iterator<int>(0)+n)),
+				  fn);
 			    
 			    // copy the tempResult back into gradient buffer
+			    n = this->m_featureDim * this->m_backOrder;
 			    internal::CopySimple2 fn2;
 			    fn2.Output     = this->m_weightUpdatesPtr;
 			    fn2.in         = helpers::getRawPointer(this->m_wTransBuff);
-			    thrust::for_each(thrust::counting_iterator<int>(0),
-					     thrust::counting_iterator<int>(0) +
-					     this->m_featureDim * this->m_backOrder,
-					     fn2);
+			    thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_wTransBuff.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(
+					  this->m_wTransBuff.begin()+n, 
+					  thrust::counting_iterator<int>(0)+n)),
+				  fn2);
 			    			    			    
 			}}
 		    }
@@ -4548,10 +5478,15 @@ namespace layers {
 			    fn.keepGradient = keepGradient;
 			    fn.featureDim   = this->m_featureDim;
 			    fn.gradients    = this->m_weightUpdatesPtr;
-			    thrust::for_each(thrust::counting_iterator<int>(0),
-					     thrust::counting_iterator<int>(0) +
-					     this->m_featureDim * this->m_backOrder,
-					     fn);
+			    int n  = 	      this->m_featureDim * this->m_backOrder;
+			    thrust::for_each(
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_paraVec.begin(), 
+						       thrust::counting_iterator<int>(0))),
+				  thrust::make_zip_iterator(
+				    thrust::make_tuple(this->m_paraVec.begin() + n,
+					  thrust::counting_iterator<int>(0)+n)),
+				  fn);
 			}}
 		    }else{
 			// if all coefficients have been updated for one time, just update all
@@ -4661,9 +5596,14 @@ namespace layers {
 			startPos     = i     * this->m_numMixture * this->m_featureDim;
 			endPos       = (i+1) * this->m_numMixture * this->m_featureDim;
 		    
-			thrust::for_each(thrust::counting_iterator<int>(0) + startPos,
-					 thrust::counting_iterator<int>(0) + endPos,
-					 fn2);
+			thrust::for_each(
+			  thrust::make_zip_iterator(
+			    thrust::make_tuple(this->m_paraVec.begin() + startPos, 
+					       thrust::counting_iterator<int>(0)+ startPos)),
+			  thrust::make_zip_iterator(
+			    thrust::make_tuple(this->m_paraVec.begin() + endPos, 
+					       thrust::counting_iterator<int>(0) + endPos)),
+			  fn2);
 			/*
 			  int startDOut    = this->m_startDimOut;
 			  int featureDim   = this->m_featureDim;
@@ -4701,6 +5641,127 @@ namespace layers {
 	    // AR along the dimension axis
 	    // No longer supported
 
+	    // Step2. Sampling
+	    internal::SamplingMixture fn;
+	    fn.featureDim   = this->m_featureDim;
+	    fn.layerSizeOut = this->m_layerSizeTar;
+	    fn.startDOut    = this->m_startDimOut;
+	    fn.mixtureNum   = this->m_numMixture;
+	    fn.totalTime    = time * this->m_precedingLayer.parallelSequences();
+	    fn.para         = para;
+	    fn.paraPtr      = ( (this->m_varScale.size()>0) ?
+				(helpers::getRawPointer(this->m_varScale)) : NULL );
+	    fn.targets      = helpers::getRawPointer(targets);
+	    fn.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+	    fn.tieVar       = this->m_tieVar;
+
+	    startPos    = i     * datapointerperFrame;
+	    endPos      = (i+1) * datapointerperFrame;
+	    thrust::for_each(
+		  thrust::make_zip_iterator(
+			thrust::make_tuple(randomSeedBuff.begin() + startPos, 
+					   thrust::counting_iterator<int>(0)+ startPos)),
+		  thrust::make_zip_iterator(
+			thrust::make_tuple(randomSeedBuff.begin() + endPos, 
+					   thrust::counting_iterator<int>(0)+endPos)),
+		  fn);
+	}}	
+	
+    }
+
+    template <typename TDevice>
+    void MDNUnit_mixture_dyn<TDevice>::getOutput(const int timeStep, 
+						 const real_t para,real_vector &targets)
+    {
+	
+	
+	int time                = this->m_precedingLayer.curMaxSeqLength();
+	int datapointerperFrame = ((this->m_endDimOut - this->m_startDimOut) * 
+				   this->m_precedingLayer.parallelSequences());
+	int datapoint           = time * datapointerperFrame;
+	
+	int fs = timeStep * datapointerperFrame;
+	int fe = fs       + datapointerperFrame;
+
+
+	this->m_paral     = this->m_precedingLayer.parallelSequences();
+	this->m_totalTime = this->m_precedingLayer.curMaxSeqLength() * this->m_paral;
+
+	
+	// initialize the random number
+	Cpu::real_vector tempRandom(datapoint, 0.0);
+	real_vector randomSeedBuff;
+	
+	const Configuration &config = Configuration::instance();
+	static boost::mt19937 *gen = NULL;
+	if (!gen) {
+	    gen = new boost::mt19937;
+	    gen->seed(config.randomSeed());
+	}
+	boost::random::normal_distribution<real_t> dist(0, 1);
+	for (size_t i = 0; i < datapointerperFrame; ++i)
+	    tempRandom[i] = (dist(*gen));
+	randomSeedBuff = tempRandom;	
+	
+	
+	// get the MDN parameter 
+	int startPos = 0;
+	int endPos   = 0;
+	for (int i = fs; i < fe; i++)
+	{{
+	    
+	    // Step1. for each time step, change the mean of the distribution
+	    // Note:
+	    //    computeForwardPass() is conducted before getOutput()
+	    //    hence, no need to transform the tanh(alpha) to AR parameter
+	    
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECT || 
+		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
+		
+		// AR along the time axis
+		for (int stepBack = 1; stepBack <= this->m_backOrder; stepBack++){
+		    
+                    #ifdef MIXTUREDYNDIAGONAL
+		    if (i >= stepBack){    
+			// one step to calculate wo_t1 + b, change the mean value
+			internal::ChangeMeanofMDN fn2;
+			fn2.startDOut    = this->m_startDimOut;
+			fn2.featureDim   = this->m_featureDim;
+			fn2.layerSizeOut = this->m_layerSizeTar;
+			fn2.mixNum       = this->m_numMixture;
+			fn2.totalTime    = this->m_totalTime;
+			fn2.targets      = helpers::getRawPointer(targets);
+						      
+		       if(this->m_tanhReg){
+			    fn2.linearPart= helpers::getRawPointer(this->m_wTransBuff) + 
+				stepBack * this->m_featureDim;
+			}else{
+			    fn2.linearPart= this->m_weightsPtr+(stepBack-1)*this->m_featureDim;
+			}
+
+			fn2.biasPart = this->m_weightsPtr+this->m_featureDim*this->m_backOrder;    
+			fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+			fn2.stepBack     = stepBack;
+			
+			fn2.trainableAPos= -1;   // this is not useful for mxiture_dynSqr
+			fn2.trainableBPos= -1;   // this is not useful for mxiture_dynSqr
+
+			startPos     = i     * this->m_numMixture * this->m_featureDim;
+			endPos       = (i+1) * this->m_numMixture * this->m_featureDim;
+		    
+			thrust::for_each(
+			  thrust::make_zip_iterator(
+			    thrust::make_tuple(this->m_paraVec.begin() + startPos, 
+					       thrust::counting_iterator<int>(0)+ startPos)),
+			  thrust::make_zip_iterator(
+			    thrust::make_tuple(this->m_paraVec.begin() + endPos, 
+					       thrust::counting_iterator<int>(0) + endPos)),
+			  fn2);	
+		    }
+                    #endif
+		}
+	    }
+	    
 	    // Step2. Sampling
 	    internal::SamplingMixture fn;
 	    fn.featureDim   = this->m_featureDim;
@@ -4768,13 +5829,109 @@ namespace layers {
 		fn.patTypes     = helpers::getRawPointer(this->m_precedingLayer.patTypes());
 		fn.tieVar       = this->m_tieVar;
 
-		thrust::for_each(thrust::counting_iterator<int>(0),
-				 thrust::counting_iterator<int>(0)+time,
-				 fn);
+		thrust::for_each(
+			  thrust::make_zip_iterator(
+			    thrust::make_tuple(this->m_paraVec.begin(), 
+					       thrust::counting_iterator<int>(0))),
+			  thrust::make_zip_iterator(
+			    thrust::make_tuple(this->m_paraVec.begin() + time, 
+					       thrust::counting_iterator<int>(0) + time)),
+			  fn);
 	}}
     }
 
+    template <typename TDevice>
+    void MDNUnit_mixture_dyn<TDevice>::getParameter(const int timeStep, real_t *targets)
+    {
+	// not implemented yet
+	throw std::runtime_error("ARRMDN getParameter(timeStep, targets) is not implemented yet");
+    }
 
+            template <typename TDevice>
+    void MDNUnit_mixture_dyn<TDevice>::fillFeedBackData(real_vector &fillBuffer,
+							const int bufferDim,
+							const int dimStart, real_vector &targets)
+    {
+	internal::CopyPart fn;
+	fn.target = helpers::getRawPointer(fillBuffer);
+	fn.tarDim = bufferDim;
+	fn.tarS   = dimStart;
+	
+	
+	if (this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_0 ||
+	    this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_1){
+	    fn.source = helpers::getRawPointer(targets);
+	    fn.srcDim = this->m_layerSizeTar;
+	    fn.srcS   = this->m_startDimOut;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}else{
+	    // skip the mixture weight part
+	    int shift = (this->m_precedingLayer.curMaxSeqLength() * 
+			 this->m_precedingLayer.parallelSequences() * this->m_numMixture);
+	    fn.source = helpers::getRawPointer(this->m_paraVec) + shift;
+	    fn.srcDim = (this->m_endDimOut - this->m_startDimOut);
+	    fn.srcS   = 0;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}
+	
+	int n = this->m_precedingLayer.curMaxSeqLength();
+	n = n * this->m_precedingLayer.parallelSequences() * fn.copyDim ;
+	thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin(), 
+					   thrust::counting_iterator<int>(0))),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + n, 
+					   thrust::counting_iterator<int>(0) + n)),
+		fn);
+    }
+
+    template <typename TDevice>
+    void MDNUnit_mixture_dyn<TDevice>::fillFeedBackData(real_vector &fillBuffer,
+							const int bufferDim,
+							const int dimStart, real_vector &targets,
+							const int timeStep)
+    {
+	internal::CopyPart fn;
+	fn.target = helpers::getRawPointer(fillBuffer);
+	fn.tarDim = bufferDim;
+	fn.tarS   = dimStart;
+		
+	if (this->m_feedBackType == MDNUNIT_FEEDBACK_OPT_0){
+	    // skip the mixture weight part
+	    int shift = (this->m_precedingLayer.curMaxSeqLength() * 
+			 this->m_precedingLayer.parallelSequences() * this->m_numMixture);
+	    fn.source = helpers::getRawPointer(this->m_paraVec) + shift;
+	    fn.srcDim = (this->m_endDimOut - this->m_startDimOut);
+	    fn.srcS   = 0;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}else{
+	    fn.source = helpers::getRawPointer(targets);
+	    fn.srcDim = this->m_layerSizeTar;
+	    fn.srcS   = this->m_startDimOut;
+	    fn.copyDim= (this->m_endDimOut - this->m_startDimOut);
+	}
+	
+	int ts = (timeStep * this->m_precedingLayer.parallelSequences()) * fn.copyDim;
+	int te = (ts  +      this->m_precedingLayer.parallelSequences()) * fn.copyDim;
+	
+	thrust::for_each(
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + ts, 
+					   thrust::counting_iterator<int>(0) + ts)),
+		thrust::make_zip_iterator(
+			thrust::make_tuple(this->m_paraVec.begin() + te, 
+					   thrust::counting_iterator<int>(0) + te)),
+		fn);
+    }
+
+    template <typename TDevice>
+    int MDNUnit_mixture_dyn<TDevice>::feedBackDim()
+    {
+	return (this->m_endDimOut - this->m_startDimOut);
+    }
+
+    
     /************************************************************
      * MDNUnit_mixture_dynSqr 
      *
@@ -4786,7 +5943,7 @@ namespace layers {
 	const int trainable)
         : MDNUnit_mixture<TDevice>(startDim, endDim, startDimOut, endDimOut, 
 				   type, (endDimOut - startDimOut), 
-				   precedingLayer, outputSize, tieVar, trainable)
+				   precedingLayer, outputSize, tieVar, trainable, -1)
     {
 	m_backOrder   = backOrder;
 	m_a_pos       = type * (1 + this->m_featureDim + (tieVar ? 1 : this->m_featureDim));
@@ -4826,7 +5983,13 @@ namespace layers {
 	}
 	return tempFlag;
     }
-    
+
+    template <typename TDevice>
+    void MDNUnit_mixture_dynSqr<TDevice>::computeForward(const int timeStep)
+    {   
+	// not implemented
+    }
+
     template <typename TDevice>
     void MDNUnit_mixture_dynSqr<TDevice>::computeForward()
     {   
@@ -5123,12 +6286,24 @@ namespace layers {
 	}}
 
     }
+
+    template <typename TDevice>
+    void MDNUnit_mixture_dynSqr<TDevice>::getOutput(const int timeStep, 
+						    const real_t para, real_vector &targets)
+    {
+    }
    
     template <typename TDevice>
     void MDNUnit_mixture_dynSqr<TDevice>::getEMOutput(const real_t para, real_vector &targets)
     {
 	// ??? to be implemented
 	printf("To be implemented\n");
+    }
+
+    template <typename TDevice>
+    void MDNUnit_mixture_dynSqr<TDevice>::getParameter(const int timeStep, real_t *targets)
+    {
+	// not implemented
     }
 
     template <typename TDevice>

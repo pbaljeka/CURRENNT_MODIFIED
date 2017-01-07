@@ -27,6 +27,7 @@
 #include "Layer.hpp"
 #include "../helpers/JsonClasses.hpp"
 
+#include <sstream>
 #include <stdexcept>
 
 
@@ -230,7 +231,40 @@ namespace layers {
     {
 	return m_currTrainingEpoch;
     }
+    
+    template <typename TDevice>
+    void Layer<TDevice>::linkTargetLayer(Layer<TDevice> &targetLayer)
+    {
+	// do nothing
+    }
 
+    template <typename TDevice>
+    const std::string& Layer<TDevice>::layerAddInfor(const int opt) const
+    {
+	// used together with secondOutputs
+        static std::string s;
+        if (s == "" && opt==1){
+	    std::ostringstream Convert;
+	    Convert << this->size() << "_";  
+	    s = Convert.str();
+	}else{
+	    s = "";
+	}
+	
+        return s;
+    }
+    
+    template <typename TDevice>
+    void Layer<TDevice>::prepareStepGeneration(const int timeStep)
+    {
+	// do nothing
+    }
+
+    template <typename TDevice>
+    typename Layer<TDevice>::real_vector& Layer<TDevice>::secondOutputs()
+    {
+        return m_outputs;
+    }
 
     // explicit template instantiations
     template class Layer<Cpu>;

@@ -122,6 +122,7 @@ private:
     
     /* Add 0602 Other options */
     std::string m_printWeightPath;
+    int         m_printWeightOpt;
     std::string m_mdnVarScaleGen;       // the vector to scale each dimension of the output
     std::string m_mdnDyn;               // whether incorporate dynamic feature
     int         m_arrmdnLearning;       // an option for the learning rate of arrmdn
@@ -146,6 +147,12 @@ private:
     std::string m_auxDataExt;
     int         m_auxDataTyp;
     int         m_auxDataDim;
+
+    /* Add 1226 for feedback connection */
+    std::string m_secondOutputOpt;     // for MDN to control second output
+
+    /* Add 20170107 option for NN training */
+    real_t   m_lstmForgetIni;          // bias to the output of LSTM forget gate in initial stage
     
     unsigned m_truncSeqLength;
     unsigned m_parallelSequences;
@@ -221,6 +228,7 @@ public:
     bool trainingMode() const;
 
     const std::string& printWeightPath() const;
+    const int& printWeightOpt() const;
     /**
      * Returns true if hybrid online/batch learning is enabled
      *
@@ -625,6 +633,10 @@ public:
     const int& auxillaryDataTyp() const;
     
     const int& auxillaryDataDim() const;
+
+    const std::string& secondOutputOpt() const;
+
+    const real_t& lstmForgetIni() const;
 };
 
 

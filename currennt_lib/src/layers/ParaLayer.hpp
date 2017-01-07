@@ -20,83 +20,95 @@
  * along with CURRENNT.  If not, see <http://www.gnu.org/licenses/>.
  *****************************************************************************/
 
-#ifndef LAYERS_MULTICLASSCLASSIFICATIONLAYER_HPP
-#define LAYERS_MULTICLASSCLASSIFICATIONLAYER_HPP
+#ifndef LAYERS_PARALAYER_HPP
+#define LAYERS_PARALAYER_HPP
 
-#include "PostOutputLayer.hpp"
+#include "FeedForwardLayer.hpp"
 
 
 namespace layers {
 
     /******************************************************************************************//**
-     * Post output layer for multiclass classification
+     * Represents a feed forward layer in the neural network
      *
      * @param TDevice The computation device (Cpu or Gpu)
+     * @param TActFn  The activation function to use
      *********************************************************************************************/
-    template <typename TDevice>
-    class MulticlassClassificationLayer : public PostOutputLayer<TDevice>
+    template <typename TDevice, typename TActFn>
+    class ParaLayer : public FeedForwardLayer<TDevice, TActFn>
     {
-        typedef typename TDevice::int_vector int_vector;
-
+	typedef typename TDevice::real_vector real_vector;
+	typedef typename TDevice::int_vector  int_vector;
+	typedef typename TDevice::bool_vector bool_vector;
+	typedef typename TDevice::pattype_vector pattype_vector;
     private:
-        int_vector m_patTargetClasses;
-
+	std::string              m_paraConStr;    // configuration of the parametric form
+	Cpu::int_vector          m_paraConfig;    // configuration of the parametric form
+	int_vector               m_paraConfigDev; // 
+	pattype_vector           m_timeStep;      // 
+	int_vector               m_paraConfig2;   // another representation of the parameter config
+		
+	std::string              m_crStepStr;     // the same as in Clock Rnn Layer
+	Cpu::int_vector          m_crStep;        // a vector of [start1,...,endN]
+	int_vector               m_crStepDevice;
+	real_vector               m_relativeTime;  // the relative time from the boundary
+	real_vector              m_weightMask;    // the weight mask for parameter function
+	bool                     m_brnn;          // is the preceding layer a bidirecitonal RNN?
+	
     public:
         /**
          * Constructs the Layer
          *
          * @param layerChild     The layer child of the JSON configuration for this layer
+         * @param weightsSection The weights section of the JSON configuration
          * @param precedingLayer The layer preceding this one
          */
-        MulticlassClassificationLayer(
+        ParaLayer(
             const helpers::JsonValue &layerChild, 
-            Layer<TDevice>  &precedingLayer
+            const helpers::JsonValue &weightsSection,
+            Layer<TDevice>           &precedingLayer
             );
 
         /**
          * Destructs the Layer
          */
-        virtual ~MulticlassClassificationLayer();
-
-        /**
-         * Counts correct classifications
-         *
-         * @return Number of correct classifications
-         */
-        int countCorrectClassifications();
+        virtual ~ParaLayer();
 
         /**
          * @see Layer::type()
          */
         virtual const std::string& type() const;
-
+	
         /**
-         * @see Layer::loadSequences()
+         * @see Layer::loadSequences
          */
         virtual void loadSequences(const data_sets::DataSetFraction &fraction);
-
-        /**
-         * @see PostOutputLayer::calculateError()
-         */
-        virtual real_t calculateError();
-
+	
         /**
          * @see Layer::computeForwardPass()
          */
         virtual void computeForwardPass();
-
-        /**
-         * @see Layer::computeForwardPass()
+	
+	/**
+         * @see Layer::exportLayer()
          */
-        virtual void computeForwardPass(const int timeStep);
+	virtual void exportLayer(const helpers::JsonValue &layersArray, 
+				 const helpers::JsonAllocator &allocator) const;
 
          /**
          * @see Layer::computeBackwardPass()
          */
         virtual void computeBackwardPass();
+	
+	/**
+	 * @see Layer::computeForwardPass()
+         */
+        virtual void computeForwardPass(const int timeStep);
+
+
     };
 
 } // namespace layers
 
 
-#endif // LAYERS_MULTICLASSCLASSIFICATIONLAYER_HPP
+#endif // LAYERS_FEEDFORWARDLAYER_HPP

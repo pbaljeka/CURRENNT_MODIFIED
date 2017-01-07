@@ -85,6 +85,9 @@ namespace layers {
 
 	// NN forward
 	virtual void computeForwardPass();
+
+	// NN forward
+	virtual void computeForwardPass(const int timeStep);
 	
 	// NN backward
 	virtual void computeBackwardPass();

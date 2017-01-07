@@ -145,6 +145,11 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void WeightedSsePostOutputLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+    }
+
+    template <typename TDevice>
     void WeightedSsePostOutputLayer<TDevice>::computeBackwardPass()
     {
         // calculate the errors

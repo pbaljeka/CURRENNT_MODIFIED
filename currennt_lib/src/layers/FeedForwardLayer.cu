@@ -121,10 +121,9 @@ namespace {
 namespace layers {
 
     template <typename TDevice, typename TActFn>
-    FeedForwardLayer<TDevice, TActFn>::FeedForwardLayer(
-        const helpers::JsonValue &layerChild, 
-        const helpers::JsonValue &weightsSection,
-        Layer<TDevice> &precedingLayer)
+    FeedForwardLayer<TDevice, TActFn>::FeedForwardLayer(const helpers::JsonValue &layerChild, 
+							const helpers::JsonValue &weightsSection, 
+							Layer<TDevice> &precedingLayer)
         : TrainableLayer<TDevice>(layerChild, weightsSection, 1, 0, precedingLayer)
     {
 	
@@ -134,12 +133,11 @@ namespace layers {
     FeedForwardLayer<TDevice, TActFn>::~FeedForwardLayer()
     {
     }
-
+    
     template <typename TDevice, typename TActFn>
     const std::string& FeedForwardLayer<TDevice, TActFn>::type() const
     {
         static std::string s;
-
         if (s.empty()) {
             if (typeid(TActFn) == typeid(activation_functions::Tanh))
                 s = "feedforward_tanh";
@@ -151,18 +149,19 @@ namespace layers {
 		s = "feedforward_relu";
             else
                 throw std::runtime_error("Unsupported activation function");
-        }
-        
+        }    
         return s;
     }
 
     template <typename TDevice, typename TActFn>
     void FeedForwardLayer<TDevice, TActFn>::computeForwardPass()
     {
+		
         // collect outputs from preceding layer
         {{
             helpers::Matrix<TDevice> weightsMatrix  (&this->weights(),                  
 						     this->precedingLayer().size(), this->size());
+	    
 	    
             helpers::Matrix<TDevice> plOutputsMatrix(&this->precedingLayer().outputs(), 
 						     this->precedingLayer().size(), 
@@ -193,6 +192,47 @@ namespace layers {
                 this->_outputs().begin(),
                 fn
                 );
+        }}
+    }
+
+
+    template <typename TDevice, typename TActFn>
+    void FeedForwardLayer<TDevice, TActFn>::computeForwardPass(const int timeStep)
+    {
+	int effTimeStep = timeStep * this->parallelSequences();
+	// collect outputs from preceding layer
+        {{
+            helpers::Matrix<TDevice> weightsMatrix  (&this->weights(),                  
+						     this->precedingLayer().size(), this->size());
+	    
+	    
+            helpers::Matrix<TDevice> plOutputsMatrix(&this->precedingLayer().outputs(), 
+						     this->precedingLayer().size(), 
+						     this->parallelSequences(),
+						     effTimeStep * this->precedingLayer().size());
+
+            helpers::Matrix<TDevice> outputsMatrix  (&this->_outputs(),                 
+						     this->size(), 
+						     this->parallelSequences(),
+						     effTimeStep * this->size());
+
+            outputsMatrix.assignProduct(weightsMatrix, true, plOutputsMatrix, false);
+        }}
+
+        // calculate the outputs of the layer
+        {{
+            internal::ComputeOutputFn<TActFn> fn;
+            fn.layerSize        = this->size();
+            fn.bias             = this->bias();
+            fn.biasWeights      = (helpers::getRawPointer(this->weights()) + 
+				   this->size() * this->precedingLayer().size());
+
+            thrust::transform(
+		this->_outputs().begin() + effTimeStep * this->size(),
+		this->_outputs().begin() + (effTimeStep+this->parallelSequences()) * this->size(),
+		thrust::counting_iterator<int>(0),
+		this->_outputs().begin() + effTimeStep * this->size(),
+		fn);
         }}
     }
 

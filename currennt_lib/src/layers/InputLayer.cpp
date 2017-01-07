@@ -223,6 +223,11 @@ namespace layers {
     void InputLayer<TDevice>::computeForwardPass()
     {
     }
+    
+    template <typename TDevice>
+    void InputLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+    }
 
     template <typename TDevice>
     void InputLayer<TDevice>::computeBackwardPass()

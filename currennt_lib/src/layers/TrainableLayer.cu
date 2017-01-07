@@ -132,18 +132,29 @@ namespace layers {
             const rapidjson::Value &biasWeightsChild     = weightsChild["bias"];
             const rapidjson::Value &internalWeightsChild = weightsChild["internal"];
 
-            if (inputWeightsChild.Size() != (this->size() * 
-					     inputWeightsPerBlock * 
-					     m_precedingLayer.size()))
-                throw std::runtime_error(std::string("Invalid number of input weights for layer '") 
-					 + this->name() + "'");
-
-            if (biasWeightsChild.Size() != this->size() * inputWeightsPerBlock)
-                throw std::runtime_error(std::string("Invalid number of bias weights for layer '") 
-					 + this->name() + "'");
-
+            if (inputWeightsChild.Size() != (this->size() * inputWeightsPerBlock *
+					     m_precedingLayer.size())){
+		if (inputWeightsPerBlock == 0){
+		    printf("\n\tWARNING: the network file has no input weight for layer %s. ",
+			   this->name().c_str());
+		    printf("\n\tIgnore this warning if this layer is SkipAdd or SkipIni.");
+		}else{
+		    throw std::runtime_error(std::string("Invalid number of input weight for layer")
+					     + this->name());
+		}
+	    }
+            if (biasWeightsChild.Size() != this->size() * inputWeightsPerBlock){
+		if (inputWeightsPerBlock == 0){
+		    printf("\n\tWARNING: the network file has no input weight for layer %s. ",
+			   this->name().c_str());
+		    printf("\n\tIgnore this warning if this layer is SkipAdd or SkipIni.");
+		}else{
+		    throw std::runtime_error(std::string("Invalid number of bias weight for layer") 
+					     + this->name() + "'");
+		}
+	    }
             if (internalWeightsChild.Size() != this->size() * internalWeightsPerBlock)
-                throw std::runtime_error(std::string("Invalid number of internal weights for layer'")
+                throw std::runtime_error(std::string("Invalid number of internal weight for layer'")
 					 + this->name() + "'");
 
             weights.reserve(inputWeightsChild.Size() + 
@@ -174,13 +185,13 @@ namespace layers {
                 gen->seed(config.randomSeed());
             }
             
-            if (config.weightsDistributionType() == Configuration::DISTRIBUTION_UNIFORM) {
+            if (config.weightsDistributionType()==Configuration::DISTRIBUTION_UNIFORM) {
                 real_t range = (config.weightsDistributionUniformMax() - 
 				config.weightsDistributionUniformMin());
                 boost::random::uniform_real_distribution<real_t> dist(0, range);
                 for (size_t i = 0; i < weights.size(); ++i)
                     weights[i] = dist(*gen) + config.weightsDistributionUniformMin();
-            }else if (config.weightsDistributionType() == Configuration::DISTRIBUTION_UNINORMALIZED){
+            }else if (config.weightsDistributionType()==Configuration::DISTRIBUTION_UNINORMALIZED){
 		// Add 02-29 Wang, for uniform distribution with normalzied min-max , 
 		// Xavier Glorot, Understanding the dif ... 2010
 		// Here, we only make a approximation by assuming 
@@ -189,10 +200,10 @@ namespace layers {
                 boost::random::uniform_real_distribution<real_t> dist(0, range);
                 for (size_t i = 0; i < weights.size(); ++i)
                     weights[i] = dist(*gen) - range/2.0;
-	    }
-            else {
+	    }else {
                 boost::random::normal_distribution<real_t> dist(
-		    config.weightsDistributionNormalMean(), config.weightsDistributionNormalSigma());
+		    config.weightsDistributionNormalMean(),
+		    config.weightsDistributionNormalSigma());
                 for (size_t i = 0; i < weights.size(); ++i)
                     weights[i] = dist(*gen);
             }
@@ -225,10 +236,11 @@ namespace layers {
         , m_precedingLayer         (precedingLayer)
         , m_inputWeightsPerBlock   (inputWeightsPerBlock)
         , m_internalWeightsPerBlock(internalWeightsPerBlock)
-        , m_bias                (layerChild->HasMember("bias") ? 
-				 static_cast<real_t>((*layerChild)["bias"].GetDouble()) : 0)
-        , m_learningRate        (layerChild->HasMember("learningRate") ? 
-				 static_cast<real_t>((*layerChild)["learningRate"].GetDouble()) : -1)
+        , m_bias                   (layerChild->HasMember("bias") ? 
+				    static_cast<real_t>((*layerChild)["bias"].GetDouble()):0)
+        , m_learningRate           (layerChild->HasMember("learningRate") ? 
+				    static_cast<real_t>((*layerChild)["learningRate"].GetDouble()):
+				    -1)
 	, m_weightNum (-1)
     {
         //std::cout << "Creating layer " << this->name() << std::endl;
@@ -555,6 +567,7 @@ namespace layers {
 
 	Cpu::real_vector weights;
 	if (weightsSection.isValid() && weightsSection->HasMember(this->name().c_str())){
+	    printf("read weight for layer %s", this->name().c_str());
 	    const rapidjson::Value &weightsChild = (*weightsSection)[this->name().c_str()];
             if (!weightsChild.IsObject())
                 throw std::runtime_error(std::string("Weights section for layer '") + 
@@ -674,7 +687,7 @@ namespace layers {
 	    m_weightUpdates = weights;
 	    
 	}else{
-	    throw std::runtime_error(std::string("Can't find layer:")+this->name().c_str());
+	    printf("not read wight for layer %s", this->name().c_str());
 	}
     }
     

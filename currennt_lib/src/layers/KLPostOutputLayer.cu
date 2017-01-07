@@ -299,6 +299,11 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void KLPostOutputLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+    }
+
+    template <typename TDevice>
     void KLPostOutputLayer<TDevice>::computeBackwardPass()
     {
      // calculate the errors

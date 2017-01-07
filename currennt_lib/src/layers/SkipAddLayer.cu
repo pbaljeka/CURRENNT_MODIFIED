@@ -51,7 +51,7 @@ namespace layers{
 					std::vector<Layer<TDevice>*> precedingLayers
 					)
 	// use preLayers[0] as fake preceding layers
-	: SkipLayer<TDevice>(layerChild, weightsSection, precedingLayers)
+	: SkipLayer<TDevice>(layerChild, weightsSection, precedingLayers, false)
     {
 	m_preLayers.assign(precedingLayers.begin(), precedingLayers.end());
 	// m_outputErrorsFromSkipLayer = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
@@ -76,34 +76,59 @@ namespace layers{
     {
 	// initialization
 	thrust::fill(this->outputs().begin(), 
-		     this->outputs().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+		     (this->outputs().begin() + 
+		      this->curMaxSeqLength() * this->parallelSequences() * this->size()),
 		     0.0
 		     );
 	
 	// initialization for backward pass
 	thrust::fill(this->outputErrors().begin(), 
-		     this->outputErrors().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+		     (this->outputErrors().begin() + 
+		      this->curMaxSeqLength() * this->parallelSequences() * this->size()),
 		     0.0
 		     );
 
 	thrust::fill(this->outputErrorsFromSkipLayer().begin(),
-		     this->outputErrorsFromSkipLayer().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+		     (this->outputErrorsFromSkipLayer().begin() + 
+		      this->curMaxSeqLength() * this->parallelSequences() * this->size()),
 		     0.0);
 
 	// accumulating the outputs of previous layers
 	BOOST_FOREACH (Layer<TDevice> *layer, m_preLayers) {
-	     
 	    thrust::transform(layer->outputs().begin(),
-			      layer->outputs().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+			      (layer->outputs().begin() + 
+			       this->curMaxSeqLength() * this->parallelSequences() * this->size()),
 			      this->outputs().begin(),
 			      this->outputs().begin(),
 			      thrust::plus<real_t>()
-			      );
-	    
-	}
-	
+			      );	    
+	}	
     }
+
+    // NN forward
+    template <typename TDevice>
+    void SkipAddLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+	int effTimeS = timeStep     * this->parallelSequences();
+	int effTimeE = (timeStep+1) * this->parallelSequences();
+
+	// initialization
+	thrust::fill(this->outputs().begin() + effTimeS * this->size(), 
+		     this->outputs().begin() + effTimeE * this->size(), 
+		     0.0);
 	
+	// accumulating the outputs of previous layers
+	BOOST_FOREACH (Layer<TDevice> *layer, m_preLayers) {
+	    thrust::transform(layer->outputs().begin() + effTimeS * this->size(),
+			      layer->outputs().begin() + effTimeE * this->size(),
+			      this->outputs().begin()  + effTimeS * this->size(),
+			      this->outputs().begin()  + effTimeS * this->size(),
+			      thrust::plus<real_t>()
+			      );	    
+	}	
+    }
+
+
     // NN backward
     template <typename TDevice>
     void SkipAddLayer<TDevice>::computeBackwardPass()
@@ -111,7 +136,8 @@ namespace layers{
 	// 
 	// at first, add the errors in both this->outputErrorsFromSkipLayer() and m_outputErrors
 	thrust::transform(this->outputErrorsFromSkipLayer().begin(),
-			  this->outputErrorsFromSkipLayer().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+			  (this->outputErrorsFromSkipLayer().begin() + 
+			   this->curMaxSeqLength() * this->parallelSequences() * this->size()),
 			  this->outputErrors().begin(),
 			  this->outputErrors().begin(),
 			  thrust::plus<real_t>()
@@ -121,9 +147,12 @@ namespace layers{
 	BOOST_REVERSE_FOREACH (Layer<TDevice> *layer, m_preLayers) {
 	    SkipLayer<TDevice>* tempLayer = dynamic_cast<SkipLayer<TDevice>*>(layer);
 	    if(tempLayer){
-		// this is an SkipAdd Layer, erros should be accumulated to this->outputErrorsFromSkipLayer()
+		// this is an SkipAdd Layer, erros should be accumulated to 
+		// this->outputErrorsFromSkipLayer()
 		thrust::transform(this->outputErrors().begin(),
-				  this->outputErrors().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+				  (this->outputErrors().begin() +
+				   this->curMaxSeqLength()      * 
+				   this->parallelSequences()    * this->size()),
 				  tempLayer->outputErrorsFromSkipLayer().begin(),
 				  tempLayer->outputErrorsFromSkipLayer().begin(),
 				  thrust::plus<real_t>()
@@ -131,7 +160,8 @@ namespace layers{
 	    }else{
 		// else, just copy the data to the outputErrors
 		thrust::copy(this->outputErrors().begin(),
-			     this->outputErrors().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+			     (this->outputErrors().begin() + 
+			      this->curMaxSeqLength() * this->parallelSequences() * this->size()),
 			     layer->outputErrors().begin()
 			     );
 	    }

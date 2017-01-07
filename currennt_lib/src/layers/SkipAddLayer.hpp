@@ -80,6 +80,9 @@ namespace layers {
 
 	// return all the preceding layers
 	std::vector<Layer<TDevice>*> PreLayers();
+
+	// NN forward
+	virtual void computeForwardPass(const int timeStep);
 	
 	// return reference to the m_outputErrorsFromSkipLayer
 	// real_vector& outputErrorsFromSkipLayer();

@@ -141,11 +141,13 @@ namespace layers{
 	
 	// For ClockRNN
 	bool                     m_clockRNN;        // whether use clock RNN
-	Cpu::int_vector          m_crStep;          // a vector of [start1,...,endN]
 	std::string              m_crStepStr;       
+	Cpu::int_vector          m_crStep;          // a vector of [start1,end1,...,end1,endN]
 	int_vector               m_crStepDevice;    //
-	real_vector              m_h2hClockRNN;     // for hidden to hidden link
-	int                      m_numH2Hmat;       
+	real_vector              m_h2hClockRNN;     // duplicated H2H matrices for each possible
+	                                            // updating schedule
+	int                      m_numH2Hmat;       // number of possible updating schedule
+	
 	// wrappers over the error buffer of preceding layer
 	// This wrap is not prepared, because we need to know whether the previous layer
 	// is trainable or not
@@ -204,6 +206,18 @@ namespace layers{
          * @see Layer::computeBackwardPass()
          */
         virtual void computeBackwardPass();
+
+
+        /**
+         * @see Layer::loadSequences
+         */
+        virtual void prepareStepGeneration(const int timeStep);
+
+        /**
+         * @see Layer::computeForwardPass()
+         */
+        virtual void computeForwardPass(const int timeStep);
+
     };
 
 } // namespace layers

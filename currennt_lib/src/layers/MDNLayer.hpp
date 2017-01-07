@@ -63,6 +63,7 @@ namespace layers {
 	cpu_real_vector m_mdnVec;        // the vector of mdnunit flag
 	cpu_real_vector m_mdnConfigVec;  // vector of the mdn configuration
 	real_vector     m_mdnParaVec;    // vector of parameters of all MDNUnits
+
 	
 	// the vector of MDNUnit for computation
 	std::vector<boost::shared_ptr<MDNUnit<TDevice> > > m_mdnUnits;  
@@ -74,7 +75,11 @@ namespace layers {
 	bool m_tieVarMDNUnit;           // whether the variance should be tied
 	                                // across dimension for each MDNUnit mixture
 	                                // model?
-
+	
+	real_vector      m_secondOutput;    // for feedback connection	
+	Cpu::int_vector  m_secondOutputOpt; // string to control the secondOutput
+	int              m_secondOutputDim; 
+	
 	// Trainable part
 	// In case the MDNUnits are trainable
 	// note: the weight space can be accessed by all the MDNUnits
@@ -97,6 +102,8 @@ namespace layers {
 	virtual real_t calculateError();
 	
 	virtual void   computeForwardPass();
+
+	virtual void   computeForwardPass(const int timeStep);
 	
 	virtual void   computeBackwardPass();
 	
@@ -112,6 +119,7 @@ namespace layers {
 	
 	void getOutput(const real_t para);
 
+	void getOutput(const int timeStep, const real_t para);
 
 	void exportConfig(const helpers::JsonValue &weightsObject, 
 			  const helpers::JsonAllocator &allocator) const;
@@ -135,8 +143,16 @@ namespace layers {
 	 * Set and read the m_currTrainingEpoch
 	 */
 	virtual void setCurrTrainingEpoch(const int curTrainingEpoch);
+	
 	virtual int& getCurrTrainingEpoch();
+	
+	virtual const std::string& layerAddInfor(const int opt) const;
 
+	virtual real_vector& secondOutputs();
+
+	virtual void retrieveFeedBackData();
+
+	virtual void retrieveFeedBackData(const int timeStep);
     };
 
 } // namespace layers

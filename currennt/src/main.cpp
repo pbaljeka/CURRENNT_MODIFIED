@@ -262,6 +262,7 @@ int trainerMain(const Configuration &config)
 	// step1: read MV if provided. MV maybe not necessary
 	boost::shared_ptr<data_sets::DataSetMV> dataMV=boost::make_shared<data_sets::DataSetMV>();
 	if (config.datamvPath().size()>0){
+	    printf("Read in data mean var from %s", config.datamvPath().c_str());
 	    dataMV = boost::make_shared<data_sets::DataSetMV>(config.datamvPath());
 	    neuralNetwork.readMVForOutput(*dataMV);
 	}
@@ -498,8 +499,18 @@ int trainerMain(const Configuration &config)
 
 	// Printing the weight into binary data
         }else if(config.printWeightPath().size()>0){
-	    neuralNetwork.printWeightMatrix(config.printWeightPath());
-	    
+	    if (config.printWeightOpt() < 2){
+		printf("Print binary weight file in '%s' with option %d\n",
+		       config.printWeightPath().c_str(), config.printWeightOpt());
+		neuralNetwork.printWeightMatrix(config.printWeightPath(), config.printWeightOpt());
+		printf("done.\n");		
+	    }else if (config.printWeightOpt() == 2){
+		// save the trained network to the output file
+		printf("Translate the network in '%s'... ", config.trainedNetworkFile().c_str());
+		saveNetwork(neuralNetwork,         config.trainedNetworkFile(), 
+			    config.learningRate(), config.weLearningRate());
+		printf("done.\n");
+	    }	    
 	 // Prediction mode
         }else {
             Cpu::real_vector outputMeans  = feedForwardSet->outputMeans();
@@ -514,7 +525,6 @@ int trainerMain(const Configuration &config)
 	    /* Modify 04-08 */
 	    if (unstandardize && config.outputFromWhichLayer()<0 && 
 		(config.mdnPara() < -1.0 || config.mdnPara() > 0.0)){
-		printf("Outputs will be scaled by mean and std  specified in NC file.\n");
 
 		// when de-normalization is not used ?
 		// 1. unstandardize
@@ -533,6 +543,9 @@ int trainerMain(const Configuration &config)
 			outputMeans[y]  = dataMV->outputM()[y];
 			outputStdevs[y] = dataMV->outputV()[y];
 		    }
+		    printf("Use mean and var from %s for de-normalization.\n", config.datamvPath().c_str());
+		}else{
+		    printf("Use mean and var in .nc file fro de-normalization.\n");
 		}
 
 		/* Add 05-31*/
@@ -549,7 +562,7 @@ int trainerMain(const Configuration &config)
 				outputMeans[y] = 0.0;
 				outputStdevs[y] = 1.0;
 			    }
-			    printf("Output without de-normalization for dimension");
+			    printf("\n\t de-normalization is skipped for dimension ");
 			    printf("from %d to %d\n", unitSOut+1, unitEOut);
 			}else{
 			    // nothing for GMM unit
@@ -590,16 +603,7 @@ int trainerMain(const Configuration &config)
                     // compute the forward pass for the current fraction and extract the outputs
 		    // Note, mdnPara is the third argument.
 		    //      when mdnVarScale is 1, this argument should be 1, instead of default -4
-                    neuralNetwork.loadSequences(*frac);
-                    neuralNetwork.computeForwardPass();
-                    std::vector<std::vector<std::vector<real_t> > > outputs = 
-			neuralNetwork.getOutputs(
-				config.outputFromWhichLayer(), 
-				config.outputFromGateLayer(),
-				((config.mdnVarScaleGen().size()>0) ? 
-				 ((config.mdnPara() > -1.5) ? config.mdnPara() : 1 ) : 
-				 (config.mdnPara()))); 
-		    // The third argument: 
+		    // generationOpt:
 		    //      if mdnVarScale is specified 
 		    //          if config.mdnPara is -1, 
 		    //               this is MDN parameter generation with mdnVarScale specified
@@ -607,6 +611,17 @@ int trainerMain(const Configuration &config)
 		    //               this is sampling, scaled by mdnVarScake
 		    //      else
 		    //          directly use the mdnPara()
+		    int generationOpt = ((config.mdnVarScaleGen().size()>0) ? 
+					 ((config.mdnPara() > -1.5) ? config.mdnPara() : 1 ) : 
+					 (config.mdnPara()));
+
+                    neuralNetwork.loadSequences(*frac);
+                    neuralNetwork.computeForwardPass(frac->maxSeqLength(), generationOpt);
+		    
+                    std::vector<std::vector<std::vector<real_t> > > outputs = 
+			neuralNetwork.getOutputs(config.outputFromWhichLayer(), 
+						 config.outputFromGateLayer(),
+						 generationOpt); 
 
                     // write one output file per sequence
                     for (int psIdx = 0; psIdx < (int)outputs.size(); ++psIdx) {

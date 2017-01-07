@@ -189,6 +189,11 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void BinaryClassificationLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+    }
+
+    template <typename TDevice>
     void BinaryClassificationLayer<TDevice>::computeBackwardPass()
     {
         internal::ComputeOutputErrorFn fn;

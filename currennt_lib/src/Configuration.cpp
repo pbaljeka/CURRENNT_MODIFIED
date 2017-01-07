@@ -189,6 +189,12 @@ Configuration::Configuration(int argc, const char *argv[])
 	("print_weight_to",        
 	 po::value(&m_printWeightPath)  ->default_value(""),                 
 	 "print the weight to binary file")
+	("print_weight_opt",
+	 po::value(&m_printWeightOpt)   ->default_value(1),
+	 std::string(
+	     std::string("option for printing weight. 0: only weights (default) and macro; ")+
+	     std::string("1: weights, macro with layertype. For hts_engine.") +
+	     std::string("2: translate *.autosave to *.jsn")).c_str())
         ("stochastic", 
 	 po::value(&m_hybridOnlineBatch)->default_value(false),                          
 	 "enables weight updates after every mini-batch of parallel calculated sequences")
@@ -286,6 +292,11 @@ Configuration::Configuration(int argc, const char *argv[])
 	      std::string("The binary vector of coef to scale variance of the mixture model.") + 
 	      std::string("The length of vector should be equal to the dimension of output of")+
 	      std::string(" the network. Sigmoid and softmax unit will ignore it")).c_str())
+	("mdn_secondOutput",
+	 po::value(&m_secondOutputOpt)  ->default_value(""),
+	 std::string(
+	      std::string("Control the second output of MDN for feedback. A string of 1/0.")  +
+	      std::string("1: this MDNUnit use para to feedback. 0: use output")).c_str())
 	("mdnDyn",            
 	 po::value(&m_mdnDyn)           ->default_value(""), 
 	 std::string(
@@ -476,6 +487,9 @@ Configuration::Configuration(int argc, const char *argv[])
 	("highway_gate_bias",    
 	 po::value(&m_highwayBias) -> default_value((real_t)-1.50, "-1.50"),    
 	 "The bias for the sigmoid function in the gate of highway block (default -1.50)")
+	("lstm_forget_gate_bias",    
+	 po::value(&m_lstmForgetIni) -> default_value((real_t)0.0, "0.0"),    
+	 "The bias to the output of forget gate in LSTM during initialization (default 0.0)")
         ;
 
     po::positional_options_description positionalOptions;
@@ -1192,4 +1206,19 @@ const int& Configuration::auxillaryDataTyp() const
 const int& Configuration::auxillaryDataDim() const
 {
     return m_auxDataDim;
+}
+
+const std::string& Configuration::secondOutputOpt() const
+{
+    return m_secondOutputOpt;
+}
+
+const int& Configuration::printWeightOpt() const
+{
+    return m_printWeightOpt;
+}
+
+const real_t& Configuration::lstmForgetIni() const
+{
+    return m_lstmForgetIni;
 }

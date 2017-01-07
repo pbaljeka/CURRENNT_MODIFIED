@@ -219,6 +219,11 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void MulticlassClassificationLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+    }
+
+    template <typename TDevice>
     void MulticlassClassificationLayer<TDevice>::computeBackwardPass()
     {
         int n = this->curMaxSeqLength() * this->parallelSequences();

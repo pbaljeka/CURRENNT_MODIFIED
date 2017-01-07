@@ -28,7 +28,6 @@
 #include "layers/PostOutputLayer.hpp"
 #include "layers/MDNLayer.hpp"
 #include "layers/SkipParaLayer.hpp"
-#include "layers/LstmLayerCharW.hpp"
 #include "data_sets/DataSet.hpp"
 #include "helpers/JsonClassesForward.hpp"
 
@@ -55,6 +54,8 @@ private:
     /* Add 02-24 Wang Residual Network*/
     std::vector<layers::Layer<TDevice>*> m_skipAddLayers;
 
+    int m_firstFeedBackLayer;                                  // ID of the first feedback Layer
+
 public:
     /**
      * Creates the neural network from the process configuration
@@ -65,7 +66,7 @@ public:
      */
     NeuralNetwork(const helpers::JsonDocument &jsonDoc, int parallelSequences, 
 		  int maxSeqLength, int chaDim, int maxTxtLength,
-                  int inputSizeOverride, int outputSizeOverride);
+                  int inputSizeOverride=-1, int outputSizeOverride=-1);
 
     /**
      * Destructs the neural network
@@ -118,6 +119,11 @@ public:
      */
     void computeForwardPass();
 
+    /**
+     * Computes the forward pass
+     */
+    void computeForwardPass(const int curMaxSeqLength, const real_t generationOpt);
+    
     /**
      * Computes the backward pass, including the weight updates
      *
@@ -201,7 +207,7 @@ public:
     Cpu::real_vector getMdnConfigVec();
 
     /* Add 0630 Wang: print the binary weight matrix */
-    void printWeightMatrix(const std::string weightPath);
+    void printWeightMatrix(const std::string weightPath, const int opt);
     
     /* Add 0928 Wang: notify the current training epoch to each layer*/
     void notifyCurrentEpoch(const int trainingEpoch);

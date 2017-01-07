@@ -957,3 +957,56 @@ Block 1025x10:
 	    }
 	}
     };
+
+
+
+-----------
+Block 1025x11
+
+	    // AR along the dimension axis
+	    if (this->m_dynDirection == MDNUNIT_TYPE_1_DIRECD || 
+		this->m_dynDirection == MDNUNIT_TYPE_1_DIRECB ){
+		// ??? this is only for the sampling with a small ratio for variance
+		// 
+		for (int stepBack = 1; stepBack <= this->m_backOrder; stepBack++){
+		    internal::ShiftBiasStep1TiedCaseDimensionAxis fn2;
+		    fn2.startDOut    = this->m_startDimOut;
+		    fn2.featureDim   = this->m_featureDim;
+		    fn2.layerSizeOut = this->m_layerSizeTar;
+		    fn2.mixNum       = this->m_numMixture;
+		    fn2.totalTime    = this->m_totalTime;
+		    fn2.targets      = helpers::getRawPointer(targets);
+		    
+		    if (this->m_tanhReg && this->m_backOrder < 3){
+			fn2.linearPart = helpers::getRawPointer(this->m_wTransBuff) + 
+			                (stepBack - 1 + 2)  + this->m_wTransBuffShiftToDim;
+		    }else{
+			fn2.linearPart = this->m_weightsPtr + this->m_weightShiftToDim
+			    + (stepBack-1);
+		    }
+		    
+		    fn2.biasPart     = this->m_weightsPtr + this->m_weightShiftToDim + 
+			               this->m_backOrder;
+		    
+		    fn2.mdnPara      = helpers::getRawPointer(this->m_paraVec);
+		    fn2.stepBack     = stepBack;
+			
+		    fn2.trainableAPos= -1;   // this is useful for mxiture_dynSqr
+		    fn2.trainableBPos= -1;   // this is useful for mxiture_dynSqr
+		
+		    // No choice but iteration. This is an IIR filter
+		    for (int featDimIdx = 0; featDimIdx < this->m_featureDim; featDimIdx++){
+			startPos = i * this->m_numMixture * this->m_featureDim + featDimIdx;
+			endPos   = i * this->m_numMixture * this->m_featureDim + featDimIdx + 1;
+			thrust::for_each(thrust::counting_iterator<int>(0)+startPos,
+					 thrust::counting_iterator<int>(0)+endPos,
+					 fn2);
+		    }
+		}
+	    }
+
+
+
+
+-------------
+Block

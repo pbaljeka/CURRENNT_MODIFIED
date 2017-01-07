@@ -70,6 +70,13 @@ namespace layers {
          * @see Layer::computeBackwardPass()
          */
         virtual void computeBackwardPass();
+
+	
+	/***
+	 * 
+	 */
+	virtual void computeForwardPass(const int timeStep);
+	
     };
 
 } // namespace layers

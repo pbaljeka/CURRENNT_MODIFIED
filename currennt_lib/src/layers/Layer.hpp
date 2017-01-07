@@ -201,7 +201,8 @@ namespace layers {
          * @param layersArray The array of layers in the document
          * @param allocator   The allocator to use
          */
-        virtual void exportLayer(const helpers::JsonValue &layersArray, const helpers::JsonAllocator &allocator) const;
+        virtual void exportLayer(const helpers::JsonValue &layersArray, 
+				 const helpers::JsonAllocator &allocator) const;
 
 	/**
 	 * Re-initialize the network
@@ -209,13 +210,36 @@ namespace layers {
 	 */
 	virtual void reInitWeight() = 0;
 	
-
+	
+	/*
+	  
+	 */
+	virtual void linkTargetLayer(Layer<TDevice> &targetLayer);
+	    
 	/**
 	 * Set and read the m_currTrainingEpoch
 	 */
 	virtual void setCurrTrainingEpoch(const int curTrainingEpoch);
+	
 	virtual int& getCurrTrainingEpoch();
 	
+
+	/*
+	 *  Provide additional information
+	 */
+	virtual const std::string& layerAddInfor(const int opt) const;
+	
+	/*
+	 * Add 1221, 
+	 * prepareStepGeneration: prepare the layer for generating the timeStep-th frame
+	 * computeForwardPass: compute the output for the timeStep-th frame
+	 */
+	virtual void prepareStepGeneration(const int timeStep);
+	
+	virtual void computeForwardPass(const int timeStep)=0;
+
+	virtual real_vector& secondOutputs();
+
     };
 
 } // namespace layers

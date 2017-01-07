@@ -4,13 +4,11 @@
 This is a modified version of CURRENNT, by Xin WANG, wangxin@nii.ac.jp.
 
 New features added:
-1. Plain RNN and Clock RNN
-   Koutnik, J., Greff, K., Gomez, F., & Schmidhuber, J. (2014). A Clockwork RNN. In Proc. ICML
-   
-   Clock RNN can use both fixed updating schedule or Context-dependent schedule
+1. Plain RNN and Clock RNN, Clock LSTM
+   Koutnik, J., Greff, K., Gomez, F., & Schmidhuber, J. (2014). A Clockwork RNN. 
 
 2. Highway network abd Residual network
-   Srivastava, Rupesh K., Klaus Greff, and Jürgen Schmidhuber. "Training very
+   Srivastava, Rupesh K., Klaus Greff, and Jurgen Schmidhuber. "Training very
    deep networks." Advances in Neural Information Processing Systems. 2015.
 
 3. Mixture density model
@@ -22,18 +20,19 @@ New features added:
   
 Other features:
 1. initialize selected layers using a trained network
-2. output of intermediate layers (e.g., from Highway gate)
-3. weighted SSE criterion
-4. ReLU 
-5. AdaGrad
-6. Easy reading and updating of one-hot vector and continuous vector as input feature
+2. AdaGrad
+3. output of intermediate layers (e.g., from Highway gate)
+4. weighted SSE criterion
+5. Easy reading and updating of one-hot vector and continuous vector as input
 ...
 
 Please take a look at the CURRENNT_SCRIPTS on my github. There are examples related
 to the above modification.
 
+Please modify "/home/smg/wang/TOOL/bin/boost" & "/home/smg/wang/TOOL/bin/netcdf/lib"
+in CMakeLists.txt to your local boost and netcdf directory before compiling
 
-------------
+--------------------------------------------------------------------------------
 
 CURRENNT is written in C++/CUDA and runs on Windows and Linux. It requires a
 CUDA-capable graphics card with a compute capability of 1.3 or higher (i.e. at

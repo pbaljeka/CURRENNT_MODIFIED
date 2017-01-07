@@ -42,6 +42,12 @@
 #define MDNARRMDN_CASECADEREAL    1
 #define MDNARRMDN_CASECADECOMPLEX 2
 
+//                                       Train     Infer
+#define MDNUNIT_FEEDBACK_OPT_0    0 //   Truth     Parameter
+#define MDNUNIT_FEEDBACK_OPT_1    1 //   Truth     Inferred
+#define MDNUNIT_FEEDBACK_OPT_2    2
+#define MDNUNIT_FEEDBACK_OPT_3    3
+
 namespace layers{
     
     // utilizes by MDNUnits
@@ -68,7 +74,7 @@ namespace layers{
 	typedef typename Cpu::real_vector cpu_real_vector;
 
     protected:
-	
+	/* w.r.t to the input side*/
 	const int   m_startDim;            // 
 	const int   m_endDim;              // [m_startDim, m_endDim) specifies the dimension range
 	                                   // of the data embedded in the (input) data vector
@@ -99,12 +105,16 @@ namespace layers{
 	                                   // 1: mixture with dynamic link, tied
 	                                   // 2: mixture with dynamic link, predicted by the NN
 	
-	int        m_currTrainingEpoch;    // the current trainig epoch 
+	int         m_currTrainingEpoch;   // the current trainig epoch 
 
+	real_vector m_oneVector;
+
+	const int   m_feedBackType;        // what's been feedback ?
+	
     public:
 	MDNUnit(int startDim,    int endDim,  int startDimOut,                int endDimOut, 
 		int type,        int paraDim, Layer<TDevice> &precedingLayer, int outputSize,
-		const int trainable);
+		const int trainable, const int feedBackOpt);
 
 	virtual      ~MDNUnit();
 
@@ -115,9 +125,15 @@ namespace layers{
 	
 	// transform the previous output into MDN parameters
 	virtual void computeForward() =0;  
+
+	// transform the previous output into MDN parameters
+	virtual void computeForward(const int timeStep) =0;  
 	
 	// sampling output from MDN
 	virtual void getOutput(const real_t para, real_vector &targets) =0; 
+
+	// sampling output from MDN
+	virtual void getOutput(const int timeStep, const real_t para, real_vector &targets) =0; 
 
 	// vector of coefficients to scale the variance (maybe only for mixture unit)
 	const   real_vector& varScale() const;	
@@ -127,6 +143,8 @@ namespace layers{
 
 	// output the parmeter of this unit
 	virtual void getParameter(real_t *targets) =0; 
+
+	virtual void getParameter(const int timeStep, real_t *targets) =0; 
 
 	// the error(-log likelihood)
 	virtual real_t calculateError(real_vector &targets) =0;
@@ -154,7 +172,19 @@ namespace layers{
 
 	// set the current training epoch number
 	void setCurrTrainingEpoch(const int currTrainingEpoch);
+
 	int &getCurrTrainingEpoch();
+
+	virtual const std::string& MDNUnitInfor(const int opt);
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets);
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets, const int timeStep);
+
+	virtual int feedBackDim();
+	
     };
 
 
@@ -174,19 +204,26 @@ namespace layers{
     public:
 
 	// methods
-	MDNUnit_sigmoid(int startDim, int endDim, int startDimOut, int endDimOut, 
-			int type, Layer<TDevice> &precedingLayer, int outputSize,
-			const int trainable = MDNUNIT_TYPE_0);
+	MDNUnit_sigmoid(int startDim, int endDim,    int startDimOut, int endDimOut, 
+			int type,     Layer<TDevice> &precedingLayer, int outputSize,
+			const int trainable   = MDNUNIT_TYPE_0,
+			const int feedBackOpt = MDNUNIT_FEEDBACK_OPT_0);
 
 	virtual ~MDNUnit_sigmoid();
 
 	virtual void computeForward();
+
+	virtual void computeForward(const int timeStep);
 	
 	virtual void getOutput(const real_t para,real_vector &targets);
+
+	virtual void getOutput(const int timeStep, const real_t para, real_vector &targets); 
 	
 	virtual void getEMOutput(const real_t para, real_vector &targets);
 
 	virtual void getParameter(real_t *targets);
+	
+	virtual void getParameter(const int timeStep, real_t *targets);
 
 	virtual real_t calculateError(real_vector &targets);
 	
@@ -195,6 +232,14 @@ namespace layers{
 	virtual void initPreOutput(const cpu_real_vector &mVec, const cpu_real_vector &vVec);
 	
 	virtual bool flagValid();
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets);
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets, const int timeStep);
+
+	virtual int feedBackDim();
     };
 
     /********************************************************
@@ -210,22 +255,29 @@ namespace layers{
 	typedef typename Cpu::real_vector cpu_real_vector;
 
     protected:
-	real_vector m_offset;
-	
+	real_vector     m_offset;
+	cpu_real_vector m_tmpProb;
     public:
 	MDNUnit_softmax(int startDim, int endDim, int startDimOut, int endDimOut, 
 			int type, Layer<TDevice> &precedingLayer, int outputSize,
-			const int trainable = MDNUNIT_TYPE_0);
+			const int trainable   = MDNUNIT_TYPE_0,
+			const int feedBackOpt = MDNUNIT_FEEDBACK_OPT_0);
 
 	virtual ~MDNUnit_softmax();
 
 	virtual void computeForward();
+
+	virtual void computeForward(const int timeStep);
 	
 	virtual void getOutput(const real_t para,real_vector &targets);
+
+	virtual void getOutput(const int timeStep, const real_t para, real_vector &targets);
 
 	virtual void getEMOutput(const real_t para, real_vector &targets);
 
 	virtual void getParameter(real_t *targets);
+
+	virtual void getParameter(const int timeStep, real_t *targets);
 
 	virtual real_t calculateError(real_vector &targets);
 	
@@ -234,6 +286,17 @@ namespace layers{
 	virtual void initPreOutput(const cpu_real_vector &mVec, const cpu_real_vector &vVec);
 	
 	virtual bool flagValid();
+	
+	virtual const std::string& MDNUnitInfor(const int opt);
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets);
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets, const int timeStep);
+
+	virtual int  feedBackDim();
+	
     };
 
     /********************************************************
@@ -262,17 +325,25 @@ namespace layers{
     public:
 	MDNUnit_mixture(int startDim, int endDim, int startDimOut, int endDimOut, 
 			int type, int featureDim, Layer<TDevice> &precedingLayer, 
-			int outputSize, const bool tieVar, const int trainable = MDNUNIT_TYPE_0);
+			int outputSize, const bool tieVar,
+			const int trainable   = MDNUNIT_TYPE_0,
+			const int feedBackOpt = MDNUNIT_FEEDBACK_OPT_0);
 
 	virtual ~MDNUnit_mixture();
 
 	virtual void computeForward();
 	
+	virtual void computeForward(const int timeStep);
+	
 	virtual void getOutput(const real_t para, real_vector &targets);
+
+	virtual void getOutput(const int timeStep, const real_t para, real_vector &targets);
 
 	virtual void getEMOutput(const real_t para, real_vector &targets); // EM MOPG output from
 
 	virtual void getParameter(real_t *targets);
+	
+	virtual void getParameter(const int timeStep, real_t *targets);
 	
 	virtual real_t calculateError(real_vector &targets);
 	
@@ -283,6 +354,15 @@ namespace layers{
 	virtual bool flagVariance() const;
 		
 	virtual bool flagValid();
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets);
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets, const int timeStep);
+
+	virtual int  feedBackDim();
+
     };    
 
 
@@ -351,7 +431,8 @@ namespace layers{
 			    const int trainable    = MDNUNIT_TYPE_1,
 			    const int dynDirection = MDNUNIT_TYPE_1_DIRECT,
 			    const bool realPole    = false,
-			    const int tanhRegOpt   = 0);
+			    const int tanhRegOpt   = 0,
+			    const int feedBackOpt  = MDNUNIT_FEEDBACK_OPT_0);
 
 	virtual ~MDNUnit_mixture_dyn();
 		
@@ -359,13 +440,19 @@ namespace layers{
 	
 	virtual void computeForward();
 	
+	virtual void computeForward(const int timeStep);
+	
 	virtual void computeBackward(real_vector &targets);
 	
 	virtual void getOutput(const real_t para, real_vector &targets);
 
+	virtual void getOutput(const int timeStep, const real_t para, real_vector &targets); 
+
 	virtual void getEMOutput(const real_t para, real_vector &targets); // EM MOPG output from
 
 	virtual void getParameter(real_t *targets);
+	
+	virtual void getParameter(const int timeStep, real_t *targets);
 	
 	// link the wegith for trainable
 	virtual void linkWeight(real_vector& weights, real_vector& weightsUpdate);     
@@ -373,6 +460,16 @@ namespace layers{
 	virtual bool flagValid();
 	
 	virtual int  tanhRegType() const;
+	
+	virtual void transformARParameter();
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets);
+
+	virtual void fillFeedBackData(real_vector &fillBuffer, const int bufferDim,
+				      const int dimStart, real_vector &targets, const int timeStep);
+
+	virtual int  feedBackDim();
     };    
 
 
@@ -407,15 +504,21 @@ namespace layers{
 	
 	virtual void computeForward();
 	
+	virtual void computeForward(const int timeStep);
+	
 	virtual real_t calculateError(real_vector &targets);
 	
 	virtual void   computeBackward(real_vector &targets);
 	
 	virtual void   getOutput(const real_t para, real_vector &targets);
 
+	virtual void   getOutput(const int timeStep, const real_t para, real_vector &targets); 
+
 	virtual void   getEMOutput(const real_t para, real_vector &targets);
 
 	virtual void   getParameter(real_t *targets);
+
+	virtual void   getParameter(const int timeStep, real_t *targets);
 	
 	virtual bool   flagValid();
 

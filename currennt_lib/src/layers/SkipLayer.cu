@@ -34,13 +34,13 @@ namespace layers{
 
     // Construct the layer
     template <typename TDevice>
-    SkipLayer<TDevice>::SkipLayer(
-					const helpers::JsonValue &layerChild,
-					const helpers::JsonValue &weightsSection,
-					std::vector<Layer<TDevice>*> precedingLayers
-					)
+    SkipLayer<TDevice>::SkipLayer(const helpers::JsonValue &layerChild,
+				  const helpers::JsonValue &weightsSection,
+				  std::vector<Layer<TDevice>*> precedingLayers,
+				  bool trainable)
 	// use preLayers[0] as fake preceding layers
-	: TrainableLayer<TDevice>(layerChild, weightsSection, 1, 0, *(precedingLayers.back()))
+	: TrainableLayer<TDevice>(layerChild, weightsSection,
+				  (trainable ? 1 : 0), 0, *(precedingLayers.back()))
     {
 	m_outputErrorsFromSkipLayer = Cpu::real_vector(this->outputs().size(), (real_t)0.0);
     }	

@@ -47,6 +47,8 @@ namespace layers {
     private:
 	int         m_dataType;    // 
 	real_vector m_errorBuf; 
+	real_t      m_lrFactor;    //
+
     public:
         /**
          * Constructs the Layer

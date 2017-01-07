@@ -80,6 +80,11 @@ namespace layers {
          */
         virtual void computeForwardPass();
 
+        /**
+         * @see Layer::computeForwardPass()
+         */
+        virtual void computeForwardPass(const int timeStep);
+
          /**
          * @see Layer::computeBackwardPass()
          */

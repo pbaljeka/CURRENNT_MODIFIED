@@ -24,73 +24,57 @@
  * You should have received a copy of the GNU General Public License
  * along with CURRENNT.  If not, see <http://www.gnu.org/licenses/>.
  *****************************************************************************/
-/****
- *
- *
- *
- ****/
 
-#ifndef LAYERS_SKIPLAYER_HPP
-#define LAYERS_SKIPLAYER_HPP
+#ifndef LAYERS_FEEDBACKLAYER_HPP
+#define LAYERS_FEEDBACKLAYER_HPP
 
+#include "Layer.hpp"
 #include "TrainableLayer.hpp"
 #include <boost/foreach.hpp>
 #include <boost/shared_ptr.hpp>
 #include <vector>
 
 namespace layers {
-    
-    /**********************************************************************
-	    Definition of the Skip layer
-     A base class for SkipAdd and SkipPara layers
-
-     **********************************************************************/
-    
-    // class definition
     template <typename TDevice>
-    class SkipLayer : public TrainableLayer<TDevice>
+    class FeedBackLayer : public TrainableLayer<TDevice>
     {
-	typedef typename TDevice::real_vector    real_vector;
-        
+	typedef typename TDevice::real_vector real_vector;
+	
     private:
-	// all the preceding skipping layers
-	// std::vector<Layer<TDevice>*> m_preLayers;
-	// to receive the errors directly from next skip add layer
-	real_vector       m_outputErrorsFromSkipLayer;
-        
+	int             m_targetDim;      // dimension of the target data
+	int             m_targetDimStart; // the 1st dimension of the target vector to be fed back
+	int             m_targetDimEnd;   // the last dim of the target vector to be fed back
+	real_vector     m_targetBuffer;   // buffer for the target data
+	Layer<TDevice> *m_targetLayer;    // target layer to be fed back
+	
+
     public:
 	
-	
-	// Construct the layer
-	SkipLayer(const helpers::JsonValue &layerChild,
-		  const helpers::JsonValue &weightsSection,
-		  std::vector<Layer<TDevice>*> precedingLayers,
-		  bool trainable);
+	FeedBackLayer(
+	    const helpers::JsonValue &layerChild,
+	    const helpers::JsonValue &weightsSection,
+            Layer<TDevice>           &precedingLayer
+	);
 
-	// Destructor
-	virtual ~SkipLayer();
+	virtual ~FeedBackLayer();
 	
-	// void 
-	//virtual const std::string& type() const;
-
+	// load the target data from the target layer
+	void linkTargetLayer(Layer<TDevice> &targetLayer);
+	
+	virtual const std::string& type() const;
+	
 	// NN forward
-	//virtual void computeForwardPass();
+	virtual void computeForwardPass();
+	
+	// NN forward, per frame
+	virtual void computeForwardPass(const int timeStep);
 	
 	// NN backward
-	//virtual void computeBackwardPass();
+	virtual void computeBackwardPass();
 	
-	// return all the preceding layers
-	//std::vector<Layer<TDevice>*> PreLayers();
-	
-	virtual real_vector& outputFromGate();
-	
-	// return reference to the m_outputErrorsFromSkipLayer
-	real_vector& outputErrorsFromSkipLayer();
     };
 
 }
 
 
-#endif 
-
-
+#endif

@@ -74,6 +74,7 @@ namespace layers {
 		const int strideW, const int strideH,
 		const int poolW,   const int poolH,
 		const int paddW,   const int paddH,
+		const int weiDim,  const int outDim,
 		Layer<TDevice> &precedingLayer);
 
 	virtual ~CNNUnit();
@@ -101,6 +102,8 @@ namespace layers {
 
     protected:
 	std::vector<boost::shared_ptr<CNNUnit<TDevice> > > m_CNNUnit;
+	const int m_weightDim;      // weight of this CNN layer
+	const int m_outputDim;      // size of output
 	
     public:
 	// initializer and destructor

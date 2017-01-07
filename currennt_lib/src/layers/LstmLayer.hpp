@@ -60,7 +60,10 @@ namespace layers {
     class LstmLayer : public TrainableLayer<TDevice>
     {
         typedef typename TDevice::real_vector real_vector;
-
+	typedef typename TDevice::int_vector  int_vector;
+	typedef typename TDevice::bool_vector bool_vector;
+	typedef typename TDevice::pattype_vector pattype_vector;
+	
         struct weight_matrices_t {
             helpers::Matrix<TDevice> niInput;
             helpers::Matrix<TDevice> igInput;
@@ -83,6 +86,14 @@ namespace layers {
             helpers::Matrix<TDevice> igDeltas;
             helpers::Matrix<TDevice> fgDeltas;
             helpers::Matrix<TDevice> ogDeltas;
+
+	    // For Clock LSTM
+	    helpers::Matrix<TDevice> niH2HWrap;  // wrapper for h2input gate matrix 
+            helpers::Matrix<TDevice> igH2HWrap;  // ... 
+            helpers::Matrix<TDevice> fgH2HWrap;  // ...
+            helpers::Matrix<TDevice> ogH2HWrap;
+            int                      skipCRPos;  // offset to find the skip vector of current step
+	    int                      h2hIdx;     // the index to retrieve the matrix of current step
         };
 
         struct forward_backward_info_t {
@@ -111,6 +122,9 @@ namespace layers {
             weight_matrices_t                weightMatrices;
             weight_matrices_t                weightUpdateMatrices;
             std::vector<timestep_matrices_t> timestepMatrices;
+
+	    bool_vector skipCR;   // the vector to specify the skipping
+	    
         };
 
     private:
@@ -129,6 +143,15 @@ namespace layers {
 
         helpers::Matrix<TDevice> m_precLayerOutputsMatrix;
 
+	// For CLLSTM
+	bool                     m_clockRNN;        // whether use clock LSTM
+	std::string              m_crStepStr;       //
+	Cpu::int_vector          m_crStep;          // a vector of [start1,end1,...,startN,endN]
+	int_vector               m_crStepDevice;    //
+	real_vector              m_h2hClockRNN;     // for hidden to hidden link
+	int                      m_numH2Hmat;       // number of possible Clock updating schedule
+
+	
     public:
         /**
          * Constructs the Layer
@@ -246,6 +269,21 @@ namespace layers {
          * @see Layer::computeBackwardPass()
          */
         virtual void computeBackwardPass();
+
+
+	/*
+	* NN forward per frame
+	*/
+	virtual void computeForwardPass(const int timeStep);
+
+	virtual void prepareStepGeneration(const int timeStep);
+
+	/**
+         * @see Layer::exportLayer()
+         */
+	virtual void exportLayer(const helpers::JsonValue &layersArray, 
+				 const helpers::JsonAllocator &allocator) const;
+
     };
 
 } // namespace layers

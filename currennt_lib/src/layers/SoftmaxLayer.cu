@@ -316,6 +316,11 @@ namespace layers {
     }
 
     template <typename TDevice, typename TFfActFn>
+    void SoftmaxLayer<TDevice, TFfActFn>::computeForwardPass(const int timeStep)
+    {
+    }
+
+    template <typename TDevice, typename TFfActFn>
     void SoftmaxLayer<TDevice, TFfActFn>::computeBackwardPass()
     {
         // calculate the error offset for each pattern

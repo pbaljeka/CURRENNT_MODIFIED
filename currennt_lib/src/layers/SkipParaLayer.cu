@@ -90,7 +90,8 @@ namespace {
     // y = H(x)*T(x)+(1-T(x))*x = (H(x)-x)*T(x) + x
     struct ComputeLayerOutputFn
     {
-	__host__ __device__ void  operator() (const thrust::tuple<const real_t&, const real_t&, const real_t&, real_t&> &t) const
+	__host__ __device__ void  operator() (
+		const thrust::tuple<const real_t&, const real_t&, const real_t&, real_t&> &t) const
 	{
 	    // t.get<0>() H(x)
 	    // t.get<1>() T(x)
@@ -124,7 +125,8 @@ namespace {
     template <typename TActFn>
     struct ComputeAccumulateSkipBackError
     {
-	__host__ __device__ void operator() (const thrust::tuple<const real_t&, const real_t&, real_t&> &t) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, 
+					     const real_t&, real_t&> &t) const
 	{
 	    // t.get<0>() T(x) (delta)
 	    // t.get<1>() e
@@ -140,7 +142,9 @@ namespace {
     template <typename TActFn>
     struct ComputeErrorToGateActFn
     {
-	__host__ __device__ void operator() (const thrust::tuple<const real_t&, const real_t&, const real_t&, const real_t&, real_t&> &t) const
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, 
+					     const real_t&, const real_t&, 
+					     const real_t&, real_t&> &t) const
 	{
 	    // t.get<0>() H(x)
 	    // t.get<1>() T(x) (delta)
@@ -189,20 +193,23 @@ namespace layers{
 					std::vector<Layer<TDevice>*> precedingLayers
 					)
 	// use preLayers[0] as fake preceding layers
-	: SkipLayer<TDevice>(layerChild, weightsSection, precedingLayers)
+	: SkipLayer<TDevice>(layerChild, weightsSection, precedingLayers, true)
     {
 	// currently, only two previous layers are allowed: one from previous skiplayer, and another
 	//  from normal feed-forward layer
 	if (precedingLayers.size()>2){
-	    throw std::runtime_error(std::string("SkipParaLayer only receive input from two previous layers"));
+	    throw std::runtime_error(
+		std::string("SkipParaLayer only receive input from two previous layers"));
 	}else if(precedingLayers.size()<2){
-	    throw std::runtime_error(std::string("SkipParaLayer can not be directly linked to Input layer"));
+	    throw std::runtime_error(
+		std::string("SkipParaLayer can not be directly linked to Input layer"));
 	}
 	
 	// check whether the previous layer is directly connected to this layer, or H(x) = x
 	// in this case, this skippara layer is not useful
 	if (m_preSkipLayer == precedingLayers.back()){
-	    throw std::runtime_error(std::string("SkipAdd or SkipPara layer is directly linked to his layer"));
+	    throw std::runtime_error(
+		std::string("SkipAdd or SkipPara layer is directly linked to this layer"));
 	}
 
 	// previous skip layer
@@ -236,10 +243,12 @@ namespace layers{
     void SkipParaLayer<TDevice, TActFn>::computeForwardPass()
     {
 	
-	// initialization for backward pass (put it here just for convience, it is complicated to initialize the errors
+	// initialization for backward pass 
+	// (put it here just for convience, it is complicated to initialize the errors
 	//  in backward pass since this layer links to multiple layers)
 	thrust::fill(this->outputErrors().begin(), 
-		     this->outputErrors().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+		     (this->outputErrors().begin() + 
+		      this->curMaxSeqLength() * this->parallelSequences() * this->size()),
 		     0.0
 		     );
 	
@@ -248,28 +257,34 @@ namespace layers{
 	// step1: linear transform
 	// Wx
 	{{
-		helpers::Matrix<TDevice> weightMatrix   (&this->weights(),               
-							 this->preSkipLayer()->size(), 
-							 this->size());
-		helpers::Matrix<TDevice> plOutputsMatrix(&this->preSkipLayer()->outputs(),
-							 this->preSkipLayer()->size(), 
-							 this->curMaxSeqLength()*this->parallelSequences());
-		helpers::Matrix<TDevice> outputsMatrix  (&this->gateOutput(),            
-							 this->size(),               
-							 this->curMaxSeqLength()*this->parallelSequences());
-		outputsMatrix.assignProduct(weightMatrix, true, plOutputsMatrix, false);
+	    helpers::Matrix<TDevice> weightMatrix   (&this->weights(),               
+						     this->preSkipLayer()->size(), 
+						     this->size());
+	    helpers::Matrix<TDevice> plOutputsMatrix(&this->preSkipLayer()->outputs(),
+						     this->preSkipLayer()->size(), 
+						     this->curMaxSeqLength() * 
+						     this->parallelSequences());
+	    helpers::Matrix<TDevice> outputsMatrix  (&this->gateOutput(),            
+						     this->size(),               
+						     this->curMaxSeqLength() * 
+						     this->parallelSequences());
+	    
+	    outputsMatrix.assignProduct(weightMatrix, true, plOutputsMatrix, false);
 	}}
+		     
 	// step2: non-linear transform
 	// f(Wx+b)
 	{{
 		internal::ComputeOutputFn<TActFn> fn;
 		fn.layerSize     = this->size();
 		fn.bias          = this->bias();
-		fn.biasWeights   = helpers::getRawPointer(this->weights()) + this->size()*this->preSkipLayer()->size();
+		fn.biasWeights   = (helpers::getRawPointer(this->weights()) + 
+				    this->size()*this->preSkipLayer()->size());
 		
 		thrust::transform(
 				  this->gateOutput().begin(),
-				  this->gateOutput().begin() + this->curMaxSeqLength()*this->parallelSequences()*this->size(),
+				  (this->gateOutput().begin() + 
+				   this->curMaxSeqLength()*this->parallelSequences()*this->size()),
 				  thrust::counting_iterator<int>(0),
 				  this->gateOutput().begin(),
 				  fn
@@ -283,10 +298,16 @@ namespace layers{
 		internal::ComputeLayerOutputFn fn;
 		int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 		thrust::for_each(
-		      thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin(),   this->gateOutput().begin(),
-								   this->preSkipLayer()->outputs().begin(),    this->_outputs().begin())),
-		      thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin()+n, this->gateOutput().begin()+n,
-								   this->preSkipLayer()->outputs().begin()+n,  this->_outputs().begin()+n)),
+		      thrust::make_zip_iterator(
+			thrust::make_tuple(this->precedingLayer().outputs().begin(),   
+					   this->gateOutput().begin(),
+					   this->preSkipLayer()->outputs().begin(),    
+					   this->_outputs().begin())),
+		      thrust::make_zip_iterator(
+			thrust::make_tuple(this->precedingLayer().outputs().begin()+n, 
+					   this->gateOutput().begin()+n,
+					   this->preSkipLayer()->outputs().begin()+n,  
+					   this->_outputs().begin()+n)),
 		      fn
 		      );
 		
@@ -295,6 +316,75 @@ namespace layers{
 	// done.
     }
 	
+    // NN forward
+    template <typename TDevice, typename TActFn>
+    void SkipParaLayer<TDevice, TActFn>::computeForwardPass(const int timeStep)
+    {
+	int effTimeS = timeStep     * this->parallelSequences();
+	int effTimeE = (timeStep+1) * this->parallelSequences();
+
+	
+	// Do the Forward Pass
+	// calculate the gate output (in the same way as feed-forward layer, but on the gate unit)
+	// step1: linear transform
+	// Wx
+	{{
+	    helpers::Matrix<TDevice> weightMatrix   (&this->weights(), 
+						     this->preSkipLayer()->size(), 
+						     this->size());
+	    
+	    helpers::Matrix<TDevice> plOutputsMatrix(&this->preSkipLayer()->outputs(),
+						     this->preSkipLayer()->size(), 
+						     this->parallelSequences(),
+						     effTimeS * this->precedingLayer().size());
+	    helpers::Matrix<TDevice> outputsMatrix  (&this->gateOutput(),            
+						     this->size(),                
+						     this->parallelSequences(),
+						     effTimeS * this->size());
+	    
+	    outputsMatrix.assignProduct(weightMatrix, true, plOutputsMatrix, false);
+	}}
+		     
+	// step2: non-linear transform
+	// f(Wx+b)
+	{{
+		internal::ComputeOutputFn<TActFn> fn;
+		fn.layerSize     = this->size();
+		fn.bias          = this->bias();
+		fn.biasWeights   = (helpers::getRawPointer(this->weights()) + 
+				    this->size()*this->preSkipLayer()->size());
+		
+		thrust::transform(
+			this->gateOutput().begin() + effTimeS * this->size(),
+			this->gateOutput().begin() + effTimeE * this->size(),
+			thrust::counting_iterator<int>(0),
+			this->gateOutput().begin() + effTimeS * this->size(),
+			fn);
+	}}
+	
+	// compute the output based on the output of gate
+	//  y = (H(x)-x)*T(x) + x
+	{{
+		internal::ComputeLayerOutputFn fn;
+		
+		thrust::for_each(
+		      thrust::make_zip_iterator(
+			thrust::make_tuple(
+			    this->precedingLayer().outputs().begin() + effTimeS * this->size(),   
+			    this->gateOutput().begin()               + effTimeS * this->size(),
+			    this->preSkipLayer()->outputs().begin()  + effTimeS * this->size(),    
+			    this->_outputs().begin()                 + effTimeS * this->size())),
+		      thrust::make_zip_iterator(
+			thrust::make_tuple(
+			    this->precedingLayer().outputs().begin() + effTimeE * this->size(), 
+			    this->gateOutput().begin()               + effTimeE * this->size(),
+			    this->preSkipLayer()->outputs().begin()  + effTimeE * this->size(),  
+			    this->_outputs().begin()                 + effTimeE * this->size())),
+		      fn);
+	}}
+	// done.
+    }
+
     // NN backward
     template <typename TDevice, typename TActFn>
     void SkipParaLayer<TDevice, TActFn>::computeBackwardPass()
@@ -302,7 +392,8 @@ namespace layers{
 	// the same as the skipadd layer
 	// at first, add the errors in both m_outputErrorsFromSkipLayer and m_outputErrors
 	thrust::transform(this->outputErrorsFromSkipLayer().begin(),
-			  this->outputErrorsFromSkipLayer().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+			  (this->outputErrorsFromSkipLayer().begin() + 
+			   this->curMaxSeqLength() * this->parallelSequences() * this->size()),
 			  this->outputErrors().begin(),
 			  this->outputErrors().begin(),
 			  thrust::plus<real_t>()
@@ -316,12 +407,18 @@ namespace layers{
 		int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 
 		thrust::for_each(
-		         thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin(), this->gateOutput().begin(),
-								      this->preSkipLayer()->outputs().begin(), this->outputErrors().begin(),
-								      this->gateErrors().begin())),
-			 thrust::make_zip_iterator(thrust::make_tuple(this->precedingLayer().outputs().begin()+n, this->gateOutput().begin()+n,
-								      this->preSkipLayer()->outputs().begin()+n, this->outputErrors().begin()+n,
-								      this->gateErrors().begin()+n)),
+		         thrust::make_zip_iterator(
+				thrust::make_tuple(this->precedingLayer().outputs().begin(), 
+						   this->gateOutput().begin(),
+						   this->preSkipLayer()->outputs().begin(), 
+						   this->outputErrors().begin(),
+						   this->gateErrors().begin())),
+			 thrust::make_zip_iterator(
+				thrust::make_tuple(this->precedingLayer().outputs().begin()+n, 
+						   this->gateOutput().begin()+n,
+						   this->preSkipLayer()->outputs().begin()+n, 
+						   this->outputErrors().begin()+n,
+						   this->gateErrors().begin()+n)),
 			 fn
 			 );
 	}}
@@ -336,24 +433,36 @@ namespace layers{
 	    
 	    if(tempLayer){
 		// update the parameter of the gate
-		// this is an SkipPara or SkipAdd Layer, erros should be accumulated to m_outputErrorsFromSkipLayer
+		// this is an SkipPara or SkipAdd Layer, 
+		// erros should be accumulated to m_outputErrorsFromSkipLayer
 		{{
 		    // W * ge + (1-T)*e
 		    // step1. accumulate W * ge to the tempLayer
-		    helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      tempLayer->size(),   this->size());
-		    helpers::Matrix<TDevice> plErrorsMatrix(&tempLayer->outputErrorsFromSkipLayer(),  tempLayer->size(),   
-							    this->curMaxSeqLength() * this->parallelSequences());
-		    helpers::Matrix<TDevice> deltasMatrix  (&this->gateErrors(), this->size(), this->curMaxSeqLength() * this->parallelSequences());
+		    helpers::Matrix<TDevice> weightsMatrix (&this->weights(),      
+							    tempLayer->size(),   
+							    this->size());
+		    helpers::Matrix<TDevice> plErrorsMatrix(&tempLayer->outputErrorsFromSkipLayer(),
+							    tempLayer->size(),   
+							    this->curMaxSeqLength() * 
+							    this->parallelSequences());
+		    helpers::Matrix<TDevice> deltasMatrix  (&this->gateErrors(), 
+							    this->size(), 
+							    this->curMaxSeqLength() * 
+							    this->parallelSequences());
 		    plErrorsMatrix.assignProduct(weightsMatrix, false, deltasMatrix, false);
 
 		    // step2. accumulate the (1 - T) * e 
 		    internal::ComputeAccumulateSkipBackError<TActFn> fn;
 		    int n = this->curMaxSeqLength() * this->parallelSequences() * this->size();
 		    thrust::for_each(
-		         thrust::make_zip_iterator(thrust::make_tuple(this->gateOutput().begin(),   this->outputErrors().begin(),
-								      tempLayer->outputErrorsFromSkipLayer().begin())),
-			 thrust::make_zip_iterator(thrust::make_tuple(this->gateOutput().begin()+n, this->outputErrors().begin()+n,
-								      tempLayer->outputErrorsFromSkipLayer().begin()+n)),
+		         thrust::make_zip_iterator(
+			    thrust::make_tuple(this->gateOutput().begin(),   
+					       this->outputErrors().begin(),
+					       tempLayer->outputErrorsFromSkipLayer().begin())),
+			 thrust::make_zip_iterator(
+			    thrust::make_tuple(this->gateOutput().begin()+n, 
+					       this->outputErrors().begin()+n,
+					       tempLayer->outputErrorsFromSkipLayer().begin()+n)),
 			 fn
 			 );
 		    
@@ -362,7 +471,10 @@ namespace layers{
 		// else, for the normal layer, progatate the erros 
 		// errors * gateOutput(x) (d_e/d_y * T(x), elementwise)
 		thrust::transform(this->outputErrors().begin(),
-				  this->outputErrors().begin()+this->curMaxSeqLength() * this->parallelSequences() * this->size(),
+				  (this->outputErrors().begin() +
+				   this->curMaxSeqLength()      * 
+				   this->parallelSequences()    * 
+				   this->size()),
 				  this->gateOutput().begin(),
 				  layer->outputErrors().begin(),
 				  thrust::multiplies<real_t>());
@@ -373,9 +485,16 @@ namespace layers{
 	// Now, this->outputErrors has become the errors before the activation funciton of gate unit
         // compute the input weight updates
         {{
-            helpers::Matrix<TDevice> weightUpdatesMatrix(&this->_weightUpdates(),this->size(), this->size());
-            helpers::Matrix<TDevice> plOutputsMatrix    (&this->preSkipLayer()->outputs(), this->preSkipLayer()->size(), this->curMaxSeqLength() * this->parallelSequences());
-            helpers::Matrix<TDevice> deltasMatrix       (&this->gateErrors(),  this->size(), this->curMaxSeqLength() * this->parallelSequences());
+            helpers::Matrix<TDevice> weightUpdatesMatrix(&this->_weightUpdates(), 
+							 this->size(), this->size());
+            helpers::Matrix<TDevice> plOutputsMatrix    (&this->preSkipLayer()->outputs(), 
+							 this->preSkipLayer()->size(), 
+							 this->curMaxSeqLength() * 
+							 this->parallelSequences());
+            helpers::Matrix<TDevice> deltasMatrix       (&this->gateErrors(),  
+							 this->size(), 
+							 this->curMaxSeqLength() * 
+							 this->parallelSequences());
 
             weightUpdatesMatrix.assignProduct(plOutputsMatrix, false, deltasMatrix, true);
         }}

@@ -145,6 +145,11 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void SseMaskPostOutputLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+    }
+
+    template <typename TDevice>
     void SseMaskPostOutputLayer<TDevice>::computeBackwardPass()
     {
         // calculate the errors

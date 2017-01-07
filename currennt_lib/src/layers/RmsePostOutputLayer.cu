@@ -153,6 +153,11 @@ namespace layers {
     }
 
     template <typename TDevice>
+    void RmsePostOutputLayer<TDevice>::computeForwardPass(const int timeStep)
+    {
+    }
+
+    template <typename TDevice>
     void RmsePostOutputLayer<TDevice>::computeBackwardPass()
     {
         // calculate the errors

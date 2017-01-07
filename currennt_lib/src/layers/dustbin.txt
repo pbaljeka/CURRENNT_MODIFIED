@@ -1005,3 +1005,253 @@ Block 1025x11
 		}
 	    }
 
+
+
+
+-------------
+Block 1226x01
+    // Parse the softmax layer option
+    //    Softmax output is a specical case, we need to map the scalar of softmax index
+    //    to one-hot vector
+    //    options: options of multiple  MDNUnit_softmax.MDNUnitInfor
+    //    oneHotDim:         the dimension of softmax parameter
+    //    oneHotStartTarget: position of the softmax index in the output vector of MDN
+    //    oneHotStartSource: position of the softmax parameter in the MDN parameter vector
+    //
+    int ParseSoftMaxOpt(const std::string options, 
+			 std::vector<int> &oneHotDim,
+			 std::vector<int> &oneHotStartTarget,
+			 std::vector<int> &oneHotStartSource,
+			 int targetStart, int targetEnd){
+	// read in the option
+	std::vector<std::string> tempArgs;
+
+	// softmax unit 1              softmax unit 2
+	// startSource_startTarget_Dim_startSource_startTarget_Dim_...
+	boost::split(tempArgs, options, boost::is_any_of("_"));
+	if ((tempArgs.size() % 3) != 1 || tempArgs[tempArgs.size()-1].size()>0){
+	    throw std::runtime_error("Error in parsing in FeedBackLayer");
+	}
+	oneHotDim.clear();
+	oneHotStartTarget.clear();
+	oneHotStartSource.clear();
+	int sumDim = 0;
+	for (int i=0; i < tempArgs.size()-1; i=i+3){
+	    int tmp = boost::lexical_cast<int>(tempArgs[i+1]);
+	    if (tmp >= targetStart && tmp < targetEnd){
+		oneHotDim.push_back(boost::lexical_cast<int>(tempArgs[i+2]));
+		oneHotStartTarget.push_back(tmp);
+		oneHotStartSource.push_back(boost::lexical_cast<int>(tempArgs[i]));
+		sumDim += oneHotDim.back();
+	    }
+	}
+	return sumDim;
+    }
+
+
+Block 1226x02
+// 
+    struct setOneHotVector
+    {
+	// Transform the softmax idx into one-hot representation
+	//
+	int targetDim;      // dimension of output of the layer to be fed back (target layer)
+	int oneHotStart;    // where is the softmax idx in output of the target layer
+	                    //  oneHotStart >=0 && oneHotStart < targetDim
+	int oneHotUpper;    // dimension of the softmax vector
+	
+	int outputDim;      // dimension of the output of this layer
+	int zeroDimStart;   // where is the 1st dimension of softmax vector in output of this layer
+	int otherDimStart;  // where is the 2nd dimension of softmax vector in output of this layer
+
+	int parallel;       // number of parallel sentences
+
+	real_t *input2;     // output of the target layer
+	real_t *output;     // output of this layer
+	
+	// dispatched over 1 * T * Parallel
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
+	{
+	    // frame index
+	    const int timeIdx= t.get<1>();  
+
+	    // position of the softmax idx (scalar) in the output of the target layer
+	    int dimTargetIdx = (timeIdx - parallel) * targetDim + oneHotStart; // look one step back
+	    
+	    // value of the softmax idx
+	    int oneHotValue  = (int)(input2[dimTargetIdx]);
+
+	    // position of frame in the output of this layer
+	    int setIdx       = timeIdx * outputDim;
+
+	    if (oneHotValue == 0){
+		// if the softmax idx is 0, set the 1st softmax dimension to 1
+		*(output + setIdx + zeroDimStart) = 1.0;
+		
+	    }else if(oneHotValue < oneHotUpper){
+		// else, set the corresponding softmax dimension to 1
+		//   otherDimStart + oneHotValue - 1 : position of the nth dimension in one frame
+		//   otherDimStart : jump over the dimensions belonging to another softmax unit
+		//   oneHotValue   : value of the softmax idx
+		//              -1 : ignores the 1st dimension of softmax one-hot 
+		*(output + setIdx + otherDimStart + oneHotValue -1) = 1.0;
+		
+		// set the 1st dimension to 0 
+		*(output + setIdx + zeroDimStart) = 0.0;
+	    }
+	}
+    };
+
+    struct setSoftMaxProb
+    {
+	// Similar to setOneHotVector, but set each dimension of the vector to the probability given
+	//  by the softmax target layer
+	// Note: the softmax probability vector is contained in the MDNLayer->m_mdnParaVec
+	int outputDim;       //
+	int oneHotDim;       //
+	int sourceDim;       // dimension of the MDNLayer->m_mdnParaVec
+
+	int zeroDimStart;    // zeroDimStart above
+	int otherDimStart;   // otherDimStart above
+	int sourceDimStart;  // where is the 1st dimension of softmax prob in MDNLayer->m_mdnParaVec
+	
+	int parallel;        // 
+	int outputUpper;     // total lenght of this->outputs()
+	int inputUpper;      // total length of MDNLayer->m_mdnParaVec
+	
+	real_t *input2;      // MDNLayer->m_mdnParaVec
+	real_t *output;      // this->outputs()
+	
+	// dispatched over 1 * T * Parallel
+	// Dim here is the dimension of the output of this layer
+	__host__ __device__ void operator() (const thrust::tuple<const real_t&, int> &t) const
+	{
+	    const int idx    = t.get<1>();
+	    int timeIdx      = idx / oneHotDim;
+	    int dimIdx       = idx % oneHotDim;
+
+	    // one time back
+	    int probIdx      = (timeIdx - parallel) * sourceDim + sourceDimStart + dimIdx;
+	    // 
+	    int outputIdx    = (timeIdx * outputDim +
+				((dimIdx==0)?(zeroDimStart):(otherDimStart + dimIdx - 1)));
+	    if (outputIdx < outputUpper && probIdx < inputUpper)
+		output[outputIdx] = input2[probIdx];	    
+	}
+    };
+
+
+Block1226x03
+    // Map the softmax scalar into one-hot vector
+	    int shiftDim = 0;
+	    for (int i = 0; i < m_oneHotDim.size(); i++){
+		internal::setOneHotVector fn2;
+		fn2.targetDim    = m_targetDim;         //
+		fn2.outputDim    = this->size();        //
+
+		fn2.parallel     = this->parallelSequences();
+		fn2.oneHotUpper  = m_oneHotDim[i];
+		fn2.oneHotStart  = m_oneHotStartTar[i]; // where is the softmax idx in target vector
+		
+		// where is the first dimension of softmax one-hot vector 
+		fn2.zeroDimStart = previousSize  + m_oneHotStartTar[i] - m_targetDimStart;
+		// where is the second dimension of softmax one-hot vector
+		fn2.otherDimStart= tmpTargetSize + shiftDim;
+		
+		fn2.input2       = helpers::getRawPointer(m_targetLayer->outputs());
+		fn2.output       = helpers::getRawPointer(this->outputs());
+		int n = this->curMaxSeqLength() * this->parallelSequences();
+		thrust::for_each(
+		  thrust::make_zip_iterator(
+		   thrust::make_tuple(this->outputs().begin()+this->parallelSequences(),
+				      thrust::counting_iterator<int>(0)+this->parallelSequences())),
+		  thrust::make_zip_iterator(
+		   thrust::make_tuple(this->outputs().begin()+n,
+				      thrust::counting_iterator<int>(0)+n)),
+		  fn2);
+
+		// skip over the preceding softmax one-hot vector part
+		shiftDim += (m_oneHotDim[i]-1); 
+	    }
+
+
+
+Block1226x04
+	    // Unfold the softmax output into the one-hot vector format
+	    // Two choices:
+	    //    feedback the predicted value
+	    //    feedback the probablity vector
+	    int shiftDim = 0;
+	    
+	    for (int i = 0; i < m_oneHotDim.size(); i++){
+		if (timeStep == 0)
+		    break;
+		if (0){
+		    //    feedback the predicted value
+		    internal::setOneHotVector fn2;
+		    fn2.targetDim    = m_targetDim;
+		    fn2.oneHotStart  = m_oneHotStartTar[i];
+		    fn2.oneHotUpper  = m_oneHotDim[i];
+		    
+		    fn2.parallel     = this->parallelSequences();
+		    fn2.outputDim    = this->size();
+		    
+		    fn2.zeroDimStart = (this->precedingLayer().size()+
+					(m_oneHotStartTar[i]-m_targetDimStart));
+		    fn2.otherDimStart= (this->precedingLayer().size()+
+					(m_targetDimEnd-m_targetDimStart) + shiftDim);
+		    
+		    
+		    fn2.input2       = helpers::getRawPointer(m_targetLayer->outputs());
+		    fn2.output       = helpers::getRawPointer(this->outputs());
+		    
+		    //int n = this->curMaxSeqLength() * this->parallelSequences();
+		    thrust::for_each(
+			thrust::make_zip_iterator(
+			  thrust::make_tuple(this->outputs().begin()+ effTimeStepS,
+					     thrust::counting_iterator<int>(0) + effTimeStepS)),
+			thrust::make_zip_iterator(
+			  thrust::make_tuple(this->outputs().begin()+ effTimeStepE,
+					     thrust::counting_iterator<int>(0) + effTimeStepE)),
+			fn2);
+		    shiftDim += (m_oneHotDim[i]-1);
+		    
+		}else{
+		    // feedback the probablity vector
+		    // dim of mdn->m_mdnParaVec
+		    int mdnParaVecSize  = (m_targetLayer->secondOutputs().size()/
+					   this->curMaxSeqLength() * this->parallelSequences());
+		    
+		    internal::setSoftMaxProb fn2;
+		    fn2.outputDim       = this->size();
+		    fn2.sourceDim       = mdnParaVecSize;  
+		    fn2.oneHotDim       = m_oneHotDim[i];
+		    
+		    fn2.sourceDimStart  = m_oneHotStartSrc[i];
+		    fn2.parallel        = this->parallelSequences();
+		    
+		    // where is the first dimension of softmax one-hot vector 
+		    fn2.zeroDimStart    = previousSize  + m_oneHotStartTar[i]-m_targetDimStart;
+		    // where is the second dimension of softmax one-hot vector 
+		    fn2.otherDimStart   = tmpTargetSize + shiftDim;
+		    
+		    fn2.input2       = helpers::getRawPointer(m_targetLayer->secondOutputs());
+		    fn2.output       = helpers::getRawPointer(this->outputs());
+		    
+		    fn2.inputUpper   = m_targetLayer->secondOutputs().size();
+		    fn2.outputUpper  = this->outputs().size();
+
+		    thrust::for_each(
+		      thrust::make_zip_iterator(
+			thrust::make_tuple(
+			   this->outputs().begin()+effTimeStepS * m_oneHotDim[i],
+			   thrust::counting_iterator<int>(0) + effTimeStepS * m_oneHotDim[i])),
+		      thrust::make_zip_iterator(
+			thrust::make_tuple(
+			   this->outputs().begin()+effTimeStepE * m_oneHotDim[i],
+			   thrust::counting_iterator<int>(0) + effTimeStepE * m_oneHotDim[i])),
+		      fn2);
+			
+		    shiftDim += (m_oneHotDim[i]-1);
+		}
+	    }

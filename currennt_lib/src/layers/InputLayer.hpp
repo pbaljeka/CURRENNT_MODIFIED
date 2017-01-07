@@ -115,6 +115,9 @@ namespace layers {
 	   only defines for Trainable Layers, here do nothing
 	 */
 	virtual void reInitWeight();
+
+	virtual void computeForwardPass(const int timeStep);
+	
     };
 
 } // namespace layers

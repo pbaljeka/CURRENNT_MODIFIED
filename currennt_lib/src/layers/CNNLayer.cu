@@ -25,6 +25,14 @@
  * along with CURRENNT.  If not, see <http://www.gnu.org/licenses/>.
  *****************************************************************************/
 
+/*
+  
+  Incomplete implementation
+  
+*/
+
+
+
 
 #ifdef _MSC_VER
 #   pragma warning (disable: 4244) // thrust/iterator/iterator_adaptor.h(121): warning C4244: '+=' : conversion from '__int64' to 'int', possible loss of data

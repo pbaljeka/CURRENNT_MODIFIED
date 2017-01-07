@@ -44,6 +44,7 @@ namespace layers {
 	
 	/* Add 0401 for weighted MSE */
 	real_vector m_outputMseWeights;  // vector for MSE output weights
+	cpu_real_vector m_outputMseWeightsCPU; //
 	bool        m_flagMseWeight;     // whether to use m_flagMseWeight
 	
 	/* Add 1012 for mean and variance vector */
@@ -56,7 +57,7 @@ namespace layers {
 	
 	/* Add 0401 for weighted MSE */
 	real_vector& _mseWeight();
-	
+	cpu_real_vector& _mseWeightCPU();
 	/* Add 1012 for */
 	real_vector& _mvVector();
 	

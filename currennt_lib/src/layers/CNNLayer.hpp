@@ -1,3 +1,4 @@
+// Obsolete
 /******************************************************************************
  * This file is an addtional component of CURRENNT. 
  * Xin WANG

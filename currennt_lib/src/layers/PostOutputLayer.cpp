@@ -52,6 +52,11 @@ namespace layers {
     {
 	return m_outputMseWeights;
     }
+    template <typename TDevice>
+    typename PostOutputLayer<TDevice>::cpu_real_vector& PostOutputLayer<TDevice>::_mseWeightCPU()
+    {
+	return m_outputMseWeightsCPU;
+    }
     
     template <typename TDevice>
     typename PostOutputLayer<TDevice>::real_vector& PostOutputLayer<TDevice>::_mvVector()
@@ -161,6 +166,7 @@ namespace layers {
 	Cpu::real_vector tempVec2(numEle, 1.0);
 	thrust::copy(tempVec.begin(), tempVec.end(), tempVec2.begin());
 	m_outputMseWeights = tempVec2;
+	m_outputMseWeightsCPU = tempVec2;
 	
 	std::cout << "Read #dim" << numEle << " mse vector" << std::endl;
 	
